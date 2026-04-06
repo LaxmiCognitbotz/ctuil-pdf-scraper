@@ -11,3 +11,4 @@ wheels/
 
 # exclude all folders ending with '_pdfs'
 *_pdfs/
+uploads/

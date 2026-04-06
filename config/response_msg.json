@@ -1,0 +1,8 @@
+{
+  "margin_download_success": "Margin data downloaded successfully.",
+  "margin_download_failed": "Failed to download margin data.",
+  "minutes_download_success": "Minutes data downloaded successfully.",
+  "minutes_download_failed": "Failed to download minutes data.",
+  "rtm_tbcb_download_success": "RTM and TBCB data downloaded successfully.",
+  "rtm_tbcb_download_failed": "Failed to download RTM and TBCB data."
+}

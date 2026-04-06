@@ -1,76 +1,87 @@
-# ctuil-pdf-scraper
+# CTUIL PDF Downloader API
 
-Automated scraper to fetch and archive Renewable Energy (RE) and ISTS connectivity margin PDFs from the CTUIL website.
+A robust, synchronous web scraping API built with FastAPI and Playwright to automate the collection of critical energy connectivity reports from the CTUIL website.
 
 ## Overview
-This repository contains an asynchronous Python scraper built with [Playwright](https://playwright.dev/python/). It visits the [CTUIL Renewable Energy portal](https://ctuil.in/renewable-energy) and automatically downloads the latest PDF reports regarding:
-1. Connectivity Margin in ISTS RE Substations
-2. Status of margins available at existing ISTS substations for proposed RE integration
 
-The downloaded PDFs are systematically saved in the `ctuil_margin_downloader/margin_pdfs` directory for archiving and further analysis.
+This project provides a centralized API for downloading and archiving various PDF reports from the [CTUIL portal](https://ctuil.in/). It is designed for stability and simplicity, using a **synchronous architecture** to ensure reliable operation on Windows environments without the complexities of asynchronous event loops.
 
-## Features
-- **Headless Execution:** Runs silently in the background without opening a browser GUI.
-- **Asynchronous Processing:** Built using Python's `asyncio` for fast and efficient scraping.
-- **Auto-organization:** Automatically formats filenames and saves them to a designated directory.
+### Scraped Data
+1.  **Connectivity Margins**: RE Substations available by 2030 and existing substation status.
+2.  **NR Meeting Minutes**: ISTS Northern Region consultation meeting records.
+3.  **RTM and TBCB**: Northern Region Real-Time Market and Tariff Based Competitive Bidding documents.
+
+## Key Features
+
+-   **Synchronous Stability**: Built using standard Python `def` routes and the Playwright Synchronous API for maximum reliability on Windows.
+-   **Centralized Storage**: All downloaded PDFs are systematically organized in a root-level `uploads/` directory.
+-   **Structured API Responses**: Every endpoint returns a consistent `APIResponse` schema with success status, descriptive messages, and a structured `APIError` object for failures.
+-   **Headless Scraping**: Operates entirely in the background using Chromium.
 
 ## Prerequisites
-- Python 3.10 or higher
-- Git
+
+-   Python 3.12 or higher
+-   [uv](https://docs.astral.sh/uv/) (highly recommended for dependency management)
 
 ## Setup and Installation
 
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/LaxmiCognitbotz/ctuil-pdf-scraper.git
-   cd ctuil-pdf-scraper
-   ```
+1.  **Clone the repository**:
+    ```bash
+    git clone https://github.com/LaxmiCognitbotz/ctuil-pdf-scraper.git
+    cd ctuil-pdf-scraper
+    ```
 
-2. **Check/Install `uv`:**
-   If you don't have [uv](https://docs.astral.sh/uv/) installed, install it first:
-   - **On Windows:**
-     ```powershell
-     powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-     ```
-   - **On macOS/Linux:**
-     ```bash
-     curl -LsSf https://astral.sh/uv/install.sh | sh
-     ```
+2.  **Install dependencies**:
+    Using `uv`:
+    ```bash
+    uv sync
+    ```
 
-3. **Create a virtual environment:**
-   Use `uv` to create an isolated Python virtual environment:
-   ```bash
-   uv venv
-   ```
-
-4. **Sync project dependencies:**
-   Pull in all the required packages defined in `pyproject.toml`:
-   ```bash
-   uv sync
-   ```
-
-5. **Install Playwright Browsers:**
-   Once dependencies are synced, install the browser binaries inside the environment:
-   ```bash
-   uv run playwright install chromium
-   ```
+3.  **Install Playwright browser**:
+    ```bash
+    uv run playwright install chromium
+    ```
 
 ## Usage
 
-To run the scraper and download the latest data:
+Start the FastAPI server from the project root:
 
 ```bash
-uv run python ctuil_margin_downloader/ctuil_margin_downloader.py
+uv run python main.py
 ```
-*Note: `uv run` will automatically use the active `uv` virtual environment.*
 
-## Structure
+The API will be available at `http://localhost:8000`. You can visit `http://localhost:8000/docs` to access the interactive Swagger UI.
+
+### API Endpoints (v1)
+
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/api/v1/download/margin` | Triggers the Margin PDF downloader |
+| `POST` | `/api/v1/download/minutes` | Triggers the meeting minutes downloader |
+| `POST` | `/api/v1/download/rtm-tbcb` | Triggers the RTM/TBCB downloader |
+| `GET` | `/` | Health check endpoint |
+
+## File Storage Structure
+
+All downloads are archived in the `uploads/` directory:
+-   `uploads/margin_pdfs/`
+-   `uploads/minutes_pdfs/`
+-   `uploads/rtm_pdfs/`
+-   `uploads/tbcb_pdfs/`
+
+## Project Layout
+
 ```
-ctuil-pdf-scraper/
-│
-├── ctuil_margin_downloader/
-│   ├── ctuil_margin_downloader.py  # Main scraper script
-│   └── margin_pdfs/                # Directory where downloaded PDFs are saved
-│
-└── README.md                       # Project documentation
+web-automation/
+├── main.py                # API Entry Point
+├── app/
+│   ├── api.py             # Route definitions
+│   ├── services.py        # Scraping logic (DownloaderService)
+│   ├── schemas.py         # APIResponse & APIError models
+│   └── __init__.py
+├── config/
+│   ├── msg.py             # Message utility
+│   └── response_msg.json  # Centralized API messages
+├── uploads/               # Central PDF repository
+└── pyproject.toml         # Project metadata & dependencies
 ```
