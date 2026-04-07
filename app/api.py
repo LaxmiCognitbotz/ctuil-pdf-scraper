@@ -61,3 +61,22 @@ def trigger_rtm_tbcb_download():
             data=None, 
             error=APIError(code="RTM_TBCB_ERROR", detail=str(e))
         )
+
+@router.post("/download/cea-transmission", response_model=APIResponse, tags=["Download"])
+def trigger_cea_transmission_download():
+    """Download Transmission reports from CEA website."""
+    try:
+        response = DownloaderService.run_cea_transmission_downloader()
+        return APIResponse(
+            status=True, 
+            message=msg["cea_transmission_success"], 
+            data=response, 
+            error=None
+        )
+    except Exception as e:
+        return APIResponse(
+            status=False, 
+            message=msg["cea_transmission_failed"], 
+            data=None, 
+            error=APIError(code="CEA_TRANSMISSION_ERROR", detail=str(e))
+        )

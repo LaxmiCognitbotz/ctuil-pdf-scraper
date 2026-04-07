@@ -226,3 +226,44 @@ class DownloaderService:
                 "rtm": {"downloaded": results["rtm_downloaded"], "found": len(links_data["rtm"])},
                 "tbcb": {"downloaded": results["tbcb_downloaded"], "found": len(links_data["tbcb"])}
             }
+
+    @staticmethod
+    def run_cea_transmission_downloader():
+        """Download Transmission reports from CEA website based on test.py logic."""
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            
+            url = "https://cea.nic.in/transmission-reports/?lang=en"
+            page.goto(url, wait_until="networkidle")
+            page.wait_for_selector("tr", timeout=15000)
+
+            target_reports = [
+                "Regulated Tariff Mechanism (Under Construction Projects)",
+                "Tariff Based Competitive Bidding Route (Completed Projects)",
+                "Tariff Based Competitive Bidding Route (Under Construction Projects)"
+            ]
+
+            download_dir = "uploads/cea_transmission"
+            os.makedirs(download_dir, exist_ok=True)
+
+            rows = page.query_selector_all("tr")
+            download_count = 0
+
+            for row in rows:
+                row_text = row.inner_text()
+                for report_name in target_reports:
+                    if report_name in row_text:
+                        pdf_link = row.query_selector('a[title="Download Report"]')
+                        if pdf_link:
+                            with page.expect_download() as download_info:
+                                pdf_link.click()
+                            download = download_info.value
+                            original_filename = download.suggested_filename
+                            file_path = os.path.join(download_dir, original_filename)
+                            download.save_as(file_path)
+                            download_count += 1
+                            break
+
+            browser.close()
+            return {"downloaded_files": download_count, "target_reports_count": len(target_reports)}

@@ -1,15 +1,16 @@
-# CTUIL PDF Downloader API
+# CTUIL PDF Scraper API
 
-A robust, synchronous web scraping API built with FastAPI and Playwright to automate the collection of critical energy connectivity reports from the CTUIL website.
+A robust, synchronous web scraping API built with FastAPI and Playwright to automate the collection of critical energy connectivity reports from the CTUIL and CEA (Central Electricity Authority) websites.
 
 ## Overview
 
-This project provides a centralized API for downloading and archiving various PDF reports from the [CTUIL portal](https://ctuil.in/). It is designed for stability and simplicity, using a **synchronous architecture** to ensure reliable operation on Windows environments without the complexities of asynchronous event loops.
+This project provides a centralized API for downloading and archiving various PDF reports from the [CTUIL portal](https://ctuil.in/) and the [CEA portal](https://cea.nic.in/). It is designed for stability and simplicity, using a **synchronous architecture** to ensure reliable operation on Windows environments without the complexities of asynchronous event loops.
 
 ### Scraped Data
 1.  **Connectivity Margins**: RE Substations available by 2030 and existing substation status.
 2.  **NR Meeting Minutes**: ISTS Northern Region consultation meeting records.
-3.  **RTM and TBCB**: Northern Region Real-Time Market and Tariff Based Competitive Bidding documents.
+3.  **RTM and TBCB**: Northern Region Real-Time Market and Tariff Based Competitive Bidding documents from CTUIL.
+4.  **CEA Transmission Reports**: Periodic reports including Regulated Tariff Mechanism and Tariff Based Competitive Bidding for completed and under-construction projects from the CEA website.
 
 ## Key Features
 
@@ -59,6 +60,7 @@ The API will be available at `http://localhost:8000`. You can visit `http://loca
 | `POST` | `/api/v1/download/margin` | Triggers the Margin PDF downloader |
 | `POST` | `/api/v1/download/minutes` | Triggers the meeting minutes downloader |
 | `POST` | `/api/v1/download/rtm-tbcb` | Triggers the RTM/TBCB downloader |
+| `POST` | `/api/v1/download/cea-transmission` | Triggers the CEA Transmission downloader |
 | `GET` | `/` | Health check endpoint |
 
 ## File Storage Structure
@@ -68,6 +70,7 @@ All downloads are archived in the `uploads/` directory:
 -   `uploads/minutes_pdfs/`
 -   `uploads/rtm_pdfs/`
 -   `uploads/tbcb_pdfs/`
+-   `uploads/cea_transmission/`
 
 ## Project Layout
 
