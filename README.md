@@ -1,90 +1,153 @@
-# CTUIL PDF Scraper API
+# CTUIL / CEA Scraper API
 
-A robust, synchronous web scraping API built with FastAPI and Playwright to automate the collection of critical energy connectivity reports from the CTUIL and CEA (Central Electricity Authority) websites.
+A REST API built with **FastAPI** that automates PDF extraction and download from the [CTUIL](https://ctuil.in/) and [CEA](https://cea.nic.in/) websites. Each scraper runs as a self-contained module — the API wraps them without modifying any original script logic.
 
 ## Overview
 
-This project provides a centralized API for downloading and archiving various PDF reports from the [CTUIL portal](https://ctuil.in/) and the [CEA portal](https://cea.nic.in/). It is designed for stability and simplicity, using a **synchronous architecture** to ensure reliable operation on Windows environments without the complexities of asynchronous event loops.
+This project consolidates **12 independent scrapers** into a single API platform. Scrapers target two primary data sources:
 
-### Scraped Data
-1.  **Connectivity Margins**: RE Substations available by 2030 and existing substation status.
-2.  **NR Meeting Minutes**: ISTS Northern Region consultation meeting records.
-3.  **RTM and TBCB**: Northern Region Real-Time Market and Tariff Based Competitive Bidding documents from CTUIL.
-4.  **CEA Transmission Reports**: Periodic reports including Regulated Tariff Mechanism and Tariff Based Competitive Bidding for completed and under-construction projects from the CEA website.
+- **CTUIL** (ctuil.in) — Consultation meetings, coordination meetings, RE generators, reallocation meetings, bidding calendars, compliance reports, revocations, renewable energy margins, and bulk consumer data.
+- **CEA** (cea.nic.in) — Transmission reports (RTM/TBCB), 500 GW RE integration documents, and NCT meeting minutes.
+
+All downloaded PDFs are organized into the `uploads/` directory with incremental naming and deduplication.
 
 ## Key Features
 
--   **Synchronous Stability**: Built using standard Python `def` routes and the Playwright Synchronous API for maximum reliability on Windows.
--   **Centralized Storage**: All downloaded PDFs are systematically organized in a root-level `uploads/` directory.
--   **Structured API Responses**: Every endpoint returns a consistent `APIResponse` schema with success status, descriptive messages, and a structured `APIError` object for failures.
--   **Headless Scraping**: Operates entirely in the background using Chromium.
+- **12 scraper endpoints** covering CTUIL and CEA data sources
+- **Strict wrapper architecture** — scraper scripts are imported and called as black boxes, never modified
+- **Consistent API responses** — every endpoint returns a standardized `APIResponse` envelope with status, message, data, error, and UTC timestamp
+- **Proper HTTP status codes** — 200 on success, 500 on failure with full traceback
+- **Incremental downloads** — scripts detect existing files and only download new ones
+- **Swagger UI** — interactive API docs at `/docs` with organized tag groups
 
 ## Prerequisites
 
--   Python 3.12 or higher
--   [uv](https://docs.astral.sh/uv/) (highly recommended for dependency management)
+- Python 3.12+
+- [uv](https://docs.astral.sh/uv/) for dependency management
 
-## Setup and Installation
+## Setup
 
-1.  **Clone the repository**:
-    ```bash
-    git clone https://github.com/LaxmiCognitbotz/ctuil-pdf-scraper.git
-    cd ctuil-pdf-scraper
-    ```
+```bash
+# Clone
+git clone https://github.com/LaxmiCognitbotz/ctuil-pdf-scraper.git
+cd ctuil-pdf-scraper
 
-2.  **Install dependencies**:
-    Using `uv`:
-    ```bash
-    uv sync
-    ```
+# Install dependencies
+uv sync
 
-3.  **Install Playwright browser**:
-    ```bash
-    uv run playwright install chromium
-    ```
+# Install Playwright browser
+uv run playwright install chromium
+```
 
 ## Usage
-
-Start the FastAPI server from the project root:
 
 ```bash
 uv run python main.py
 ```
 
-The API will be available at `http://localhost:8000`. You can visit `http://localhost:8000/docs` to access the interactive Swagger UI.
+The API starts at `http://localhost:8000`. Visit `http://localhost:8000/docs` for the Swagger UI.
 
-### API Endpoints (v1)
+## API Endpoints (v1)
+
+### Health & Discovery
 
 | Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `POST` | `/api/v1/download/margin` | Triggers the Margin PDF downloader |
-| `POST` | `/api/v1/download/minutes` | Triggers the meeting minutes downloader |
-| `POST` | `/api/v1/download/rtm-tbcb` | Triggers the RTM/TBCB downloader |
-| `POST` | `/api/v1/download/cea-transmission` | Triggers the CEA Transmission downloader |
-| `GET` | `/` | Health check endpoint |
+|--------|----------|-------------|
+| `GET` | `/` | Health check |
+| `GET` | `/api/v1/scrapers` | List all available scrapers with metadata |
 
-## File Storage Structure
+### CTUIL Scrapers
 
-All downloads are archived in the `uploads/` directory:
--   `uploads/margin_pdfs/`
--   `uploads/minutes_pdfs/`
--   `uploads/rtm_pdfs/`
--   `uploads/tbcb_pdfs/`
--   `uploads/cea_transmission/`
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/scrape/ists-consultation-meeting` | Agenda & Minutes for all 5 regions |
+| `POST` | `/api/v1/scrape/ists-joint-coordination-meeting` | Notice & Minutes for all regions |
+| `POST` | `/api/v1/scrape/regenerators` | Effective-date-wise connectivity PDFs |
+| `POST` | `/api/v1/scrape/reallocation-meetings` | Agenda & Minutes for all regions |
+| `POST` | `/api/v1/scrape/bidding-calendar` | Bidding Calendar PDFs |
+| `POST` | `/api/v1/scrape/compliance-fc` | Connectivity Grantee PDFs |
+| `POST` | `/api/v1/scrape/monitoring-connectivity` | Revocation & Monitoring PDFs |
+| `POST` | `/api/v1/scrape/renewable-energy` | RE margin & Bays Allocation PDFs |
+| `POST` | `/api/v1/scrape/substation-bulk-consumers` | Bulk Consumer PDFs |
 
-## Project Layout
+### CEA Scrapers
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/scrape/transmission-reports` | RTM & TBCB reports (last 24 months) |
+| `POST` | `/api/v1/scrape/potential-re-zones` | 500 GW RE Integration PDFs |
+| `POST` | `/api/v1/scrape/nct-meetings` | NCT meeting minutes |
+
+## Response Format
+
+Every endpoint returns:
+
+```json
+{
+  "status": true,
+  "message": "RE Generators scraper completed successfully.",
+  "data": {
+    "script": "source_03_regenerators_scraper",
+    "execution_time_seconds": 18.42,
+    "output_dir": "uploads/Effective_Date_Wise"
+  },
+  "error": null,
+  "timestamp": "2026-04-20T10:29:50.093180+00:00"
+}
+```
+
+On failure, `status` is `false` and `error` contains `code` and `detail` (full traceback).
+
+## Project Structure
 
 ```
-web-automation/
-├── main.py                # API Entry Point
+ctuil-pdf-scraper/
+├── main.py                    # App entry point, health endpoint, tag ordering
+├── pyproject.toml             # Dependencies & project metadata
+│
 ├── app/
-│   ├── api.py             # Route definitions
-│   ├── services.py        # Scraping logic (DownloaderService)
-│   ├── schemas.py         # APIResponse & APIError models
-│   └── __init__.py
-├── config/
-│   ├── msg.py             # Message utility
-│   └── response_msg.json  # Centralized API messages
-├── uploads/               # Central PDF repository
-└── pyproject.toml         # Project metadata & dependencies
+│   ├── __init__.py
+│   ├── api.py                 # Route definitions (routes only)
+│   ├── catalog.py             # Scraper metadata for discovery endpoint
+│   ├── helpers.py             # Shared request handler & error responses
+│   ├── schemas.py             # APIResponse & APIError models
+│   ├── services.py            # 12 service methods (one per scraper)
+│   │
+│   └── scrapers/              # Original scripts (untouched)
+│       ├── __init__.py
+│       ├── source_01_ists_consultation_meeting_scrapr.py
+│       ├── source_02_ists_joint_coordination_meeting_scraper.py
+│       ├── source_03_regenerators_scraper.py
+│       ├── source_04_reallocation_meetings_scraper.py
+│       ├── source_05_bidding_calender_scraper.py
+│       ├── source_06_transmission_reports_scraper.py
+│       ├── source_07_ctuil_compliance_fc_scraper.py
+│       ├── source_08_monitoring_connectivity_scraper.py
+│       ├── source_09_renewable_energy_scraper.py
+│       ├── source_10a_potential_rezones_scraper.py
+│       ├── source_10b_nct_meetings_scraper.py
+│       └── source_11_substation_bulk_consumers_scraper.py
+│
+└── uploads/                   # All downloaded PDFs (auto-created)
+    ├── ists_consultation_meeting/
+    ├── ists_joint_coordination_meeting/
+    ├── Effective_Date_Wise/
+    ├── reallocation_meetings/
+    ├── bidding_calendar/
+    ├── compliance_and_fc/
+    ├── revocations/
+    ├── renewable_energy/
+    ├── ctuil_bulk_consumers/
+    ├── transmission_reports/
+    ├── cea_500gw/
+    └── cea_nct_minutes/
 ```
+
+## Tech Stack
+
+- **FastAPI** — REST framework
+- **Playwright** — Browser automation for JS-rendered pages
+- **aiohttp** — Async HTTP downloads
+- **BeautifulSoup4** — HTML parsing
+- **requests** — Sync HTTP calls (CEA scraper)
+- **uv** — Dependency management
