@@ -1,269 +1,276 @@
-import os
-from urllib.parse import unquote, urljoin
-from playwright.sync_api import sync_playwright
-from app.schemas import APIResponse
+"""
+Service layer - one explicit method per scrapers/ module.
+"""
 
-class DownloaderService:
-    @staticmethod
-    def run_margin_downloader():
-        """Download Renewable Energy connectivity margin PDFs from CTUIL."""
-        with sync_playwright() as p:
-            # Launch browser
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            
-            url = "https://ctuil.in/renewable-energy"
-            page.goto(url, wait_until="networkidle")
+import asyncio
+import inspect
+import logging
+import time
+from typing import Any
 
-            # Wait for tables to be visible
-            page.wait_for_selector("table")
+logger = logging.getLogger(__name__)
 
-            # Extract links from both target tables
-            links_data = page.evaluate("""() => {
-                const results = [];
-                const tables = Array.from(document.querySelectorAll('table'));
-                
-                // TABLE 1: Connectivity Margin in ISTS RE Substations available by Mar-2030
-                const table1 = tables.find(t => t.innerText.includes('Connectivity Margin in ISTS RE Substations available by Mar-2030'));
-                if (table1) {
-                    Array.from(table1.querySelectorAll('tr')).forEach(row => {
-                        const cells = Array.from(row.cells);
-                        if (cells.length >= 4) {
-                            const pdfLink = cells[3].querySelector('a'); 
-                            if (pdfLink && pdfLink.href.toLowerCase().endsWith('.pdf')) {
-                                results.push(pdfLink.href);
-                            }
-                        }
-                    });
-                }
 
-                // TABLE 2: Status of margins available at existing ISTS substations...
-                const table2 = tables.find(t => t.innerText.includes('Status of margins available at existing ISTS substations for proposed RE integration as on'));
-                if (table2) {
-                    Array.from(table2.querySelectorAll('tr')).forEach(row => {
-                        const cells = Array.from(row.cells);
-                        if (cells.length >= 3) {
-                            const pdfLink = cells[2].querySelector('a'); 
-                            if (pdfLink && pdfLink.href.toLowerCase().endsWith('.pdf')) {
-                                results.push(pdfLink.href);
-                            }
-                        }
-                    });
-                }
-                
-                return results;
-            }""")
+def _execute(script_module: Any, label: str, output_dir: str) -> dict:
+    is_async = asyncio.iscoroutinefunction(script_module.main)
+    script_name = script_module.__name__.rsplit(".", 1)[-1]
 
-            download_dir = "uploads/margin_pdfs"
-            os.makedirs(download_dir, exist_ok=True)
+    logger.info("[START] %s  (module=%s, async=%s)", label, script_name, is_async)
+    start = time.time()
 
-            downloaded_count = 0
-            for i, pdf_url in enumerate(links_data):
-                original_filename = unquote(pdf_url.split('/')[-1])
-                
-                file_name = f"{i+1:02d}_{original_filename}"
-                file_path = os.path.join(download_dir, file_name)
+    if is_async:
+        asyncio.run(script_module.main())
+    else:
+        script_module.main()
 
-                try:
-                    response = page.request.get(pdf_url)
-                    if response.status == 200:
-                        with open(file_path, "wb") as f:
-                            f.write(response.body())
-                        downloaded_count += 1
-                except Exception as e:
-                    print(f"Error downloading {pdf_url}: {e}")
+    elapsed = round(time.time() - start, 2)
+    logger.info("[DONE]  %s  completed in %ss", label, elapsed)
 
-            browser.close()
-            return {"downloaded_files": downloaded_count, "total_links_found": len(links_data)}
+    return {
+        "script": script_name,
+        "execution_time_seconds": elapsed,
+        "output_dir": output_dir,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════
+#  ScraperService
+# ══════════════════════════════════════════════════════════════════
+
+class ScraperService:
+    """
+    Orchestrates execution of all scrapers/ modules.
+
+    Every public ``run_*`` method maps 1-to-1 to a script file.
+    """
+
+    # ──────────────────────────────────────────────────────────
+    #  CTUIL Scrapers
+    # ──────────────────────────────────────────────────────────
 
     @staticmethod
-    def run_minutes_downloader():
-        """Download ISTS Northern Region consultation meeting minutes."""
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            
-            page.goto("https://ctuil.in/ists-consultation-meeting", wait_until="networkidle")
+    def run_ists_consultation_meeting() -> dict:
+        """
+        Source 01 — ISTS Consultation Meeting Scraper
+        ──────────────────────────────────────────────
+        Downloads **Agenda** and **Minutes** PDFs for all five regions
+        (NR, WR, SR, ER, NER) across all paginated pages.
 
-            # Preloader
-            try:
-                page.wait_for_selector(".preLoader", state="hidden", timeout=5000)
-            except:
-                pass
+        Target : https://ctuil.in/ists-consultation-meeting
+        Output : uploads/ists_consultation_meeting/{Region}/{Agenda|Minutes}/
+        """
+        from app.scrapers import source_01_ists_consultation_meeting_scrapr as script
 
-            # Filter for Northern Region
-            page.click("a[title='Northern Region']", force=True)
-            page.wait_for_timeout(3000)
-
-            all_minutes_links = []
-            while True:
-                # Extract 'Minutes' links from the current page
-                page_links = page.evaluate("""() => {
-                    const rows = Array.from(document.querySelectorAll('table tbody tr'));
-                    const headers = Array.from(document.querySelectorAll('table thead th, table tr th')).map(th => th.innerText.trim());
-                    const minutesIdx = headers.findIndex(h => h.includes('Minutes'));
-                    const regionIdx = headers.findIndex(h => h.includes('Region'));
-                    
-                    if (minutesIdx === -1) return [];
-
-                    return rows.map(row => {
-                        const cells = Array.from(row.cells);
-                        const region = cells[regionIdx]?.innerText.trim();
-                        if (region && !region.includes('Northern')) return null;
-
-                        const minutesCell = cells[minutesIdx];
-                        const link = minutesCell ? minutesCell.querySelector('a[href$=".pdf"]') : null;
-                        return link ? link.href : null;
-                    }).filter(href => href !== null);
-                }""")
-
-                all_minutes_links.extend(page_links)
-
-                # Pagination
-                next_button = page.query_selector('button[title="Goto Next Page"]')
-                if next_button:
-                    is_disabled = next_button.evaluate("btn => btn.disabled")
-                    onclick_attr = next_button.get_attribute("onclick")
-                    
-                    if not is_disabled and onclick_attr:
-                        next_button.click()
-                        page.wait_for_timeout(3000)
-                    else:
-                        break
-                else:
-                    break
-
-            # Download
-            download_path = "uploads/minutes_pdfs"
-            os.makedirs(download_path, exist_ok=True)
-
-            downloaded_count = 0
-            for i, url in enumerate(all_minutes_links):
-                clean_name = unquote(url.split('/')[-1])
-                file_path = os.path.join(download_path, f"{i+1}_{clean_name}")
-                
-                try:
-                    response = page.request.get(url)
-                    if response.status == 200:
-                        with open(file_path, "wb") as f:
-                            f.write(response.body())
-                        downloaded_count += 1
-                except Exception as e:
-                    print(f"Error downloading {url}: {e}")
-
-            browser.close()
-            return {"downloaded_files": downloaded_count, "total_links_found": len(all_minutes_links)}
+        return _execute(
+            script,
+            label="ISTS Consultation Meeting",
+            output_dir="uploads/ists_consultation_meeting",
+        )
 
     @staticmethod
-    def run_rtm_tbcb_downloader():
-        """Download Northern Region RTM and TBCB PDFs."""
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            
-            base_url = "https://ctuil.in"
-            url = urljoin(base_url, "/rtmtbcb")
-            page.goto(url, wait_until="networkidle")
+    def run_ists_joint_coordination_meeting() -> dict:
+        """
+        Source 02 — ISTS Joint Coordination Meeting Scraper
+        ───────────────────────────────────────────────────
+        Downloads **Notice** and **Minutes** PDFs for all regions.
 
-            # Switch to NR tab
-            page.click("a[data-bs-target='#reg_tab2']", force=True)
-            page.wait_for_timeout(2000)
+        Target : https://ctuil.in/ists-joint-coordination-meeting
+        Output : uploads/ists_joint_coordination_meeting/{Region}/{Notice|Minutes}/
+        """
+        from app.scrapers import source_02_ists_joint_coordination_meeting_scraper as script
 
-            # Extract links
-            links_data = page.evaluate("""() => {
-                const results = { rtm: [], tbcb: [] };
-                const panel = document.querySelector('#reg_tab2');
-                if (!panel) return results;
-
-                const rows = Array.from(panel.querySelectorAll('table tr')).slice(1);
-                
-                rows.forEach(row => {
-                    const cells = Array.from(row.cells);
-                    if (cells.length >= 3) {
-                        const rtmLink = cells[1].querySelector('a');
-                        const tbcbLink = cells[2].querySelector('a');
-
-                        if (rtmLink && rtmLink.href.toLowerCase().endsWith('.pdf')) {
-                            results.rtm.push(rtmLink.href);
-                        }
-                        if (tbcbLink && tbcbLink.href.toLowerCase().endsWith('.pdf')) {
-                            results.tbcb.push(tbcbLink.href);
-                        }
-                    }
-                });
-                return results;
-            }""")
-
-            rtm_dir = "uploads/rtm_pdfs"
-            tbcb_dir = "uploads/tbcb_pdfs"
-            os.makedirs(rtm_dir, exist_ok=True)
-            os.makedirs(tbcb_dir, exist_ok=True)
-
-            results = {"rtm_downloaded": 0, "tbcb_downloaded": 0}
-
-            def download_files(links, folder, key):
-                count = 0
-                for i, pdf_url in enumerate(links):
-                    original_filename = unquote(pdf_url.split('/')[-1])
-                    file_name = f"{i+1:02d}_{original_filename}"
-                    file_path = os.path.join(folder, file_name)
-
-                    try:
-                        response = page.request.get(pdf_url)
-                        if response.status == 200:
-                            with open(file_path, "wb") as f:
-                                f.write(response.body())
-                            count += 1
-                    except Exception:
-                        pass
-                results[key] = count
-
-            download_files(links_data['rtm'], rtm_dir, "rtm_downloaded")
-            download_files(links_data['tbcb'], tbcb_dir, "tbcb_downloaded")
-
-            browser.close()
-            return {
-                "rtm": {"downloaded": results["rtm_downloaded"], "found": len(links_data["rtm"])},
-                "tbcb": {"downloaded": results["tbcb_downloaded"], "found": len(links_data["tbcb"])}
-            }
+        return _execute(
+            script,
+            label="ISTS Joint Coordination Meeting",
+            output_dir="uploads/ists_joint_coordination_meeting",
+        )
 
     @staticmethod
-    def run_cea_transmission_downloader():
-        """Download Transmission reports from CEA website based on test.py logic."""
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            
-            url = "https://cea.nic.in/transmission-reports/?lang=en"
-            page.goto(url, wait_until="networkidle")
-            page.wait_for_selector("tr", timeout=15000)
+    def run_regenerators() -> dict:
+        """
+        Source 03 — RE Generators Scraper
+        ─────────────────────────────────
+        Downloads **effective-date-wise connectivity** PDFs.
+        Uses Playwright to render the JS-heavy page.
 
-            target_reports = [
-                "Regulated Tariff Mechanism (Under Construction Projects)",
-                "Tariff Based Competitive Bidding Route (Completed Projects)",
-                "Tariff Based Competitive Bidding Route (Under Construction Projects)"
-            ]
+        Target : https://ctuil.in/regenerators
+        Output : uploads/Effective_Date_Wise/
+        """
+        from app.scrapers import source_03_regenerators_scraper as script
 
-            download_dir = "uploads/cea_transmission"
-            os.makedirs(download_dir, exist_ok=True)
+        return _execute(
+            script,
+            label="RE Generators",
+            output_dir="uploads/Effective_Date_Wise",
+        )
 
-            rows = page.query_selector_all("tr")
-            download_count = 0
+    @staticmethod
+    def run_reallocation_meetings() -> dict:
+        """
+        Source 04 — Reallocation Meetings Scraper
+        ──────────────────────────────────────────
+        Downloads **Agenda** and **Minutes** PDFs for all regions.
+        Uses Playwright to navigate region tabs.
 
-            for row in rows:
-                row_text = row.inner_text()
-                for report_name in target_reports:
-                    if report_name in row_text:
-                        pdf_link = row.query_selector('a[title="Download Report"]')
-                        if pdf_link:
-                            with page.expect_download() as download_info:
-                                pdf_link.click()
-                            download = download_info.value
-                            original_filename = download.suggested_filename
-                            file_path = os.path.join(download_dir, original_filename)
-                            download.save_as(file_path)
-                            download_count += 1
-                            break
+        Target : https://www.ctuil.in/reallocation_meetings
+        Output : uploads/reallocation_meetings/{Region}/{agenda|minutes}/
+        """
+        from app.scrapers import source_04_reallocation_meetings_scraper as script
 
-            browser.close()
-            return {"downloaded_files": download_count, "target_reports_count": len(target_reports)}
+        return _execute(
+            script,
+            label="Reallocation Meetings",
+            output_dir="uploads/reallocation_meetings",
+        )
+
+    @staticmethod
+    def run_bidding_calendar() -> dict:
+        """
+        Source 05 — Bidding Calendar Scraper
+        ────────────────────────────────────
+        Downloads Bidding Calendar PDFs from CTUIL.
+
+        Target : https://www.ctuil.in/bidding-calendar
+        Output : uploads/bidding_calendar/
+        """
+        from app.scrapers import source_05_bidding_calender_scraper as script
+
+        return _execute(
+            script,
+            label="Bidding Calendar",
+            output_dir="uploads/bidding_calendar",
+        )
+
+    @staticmethod
+    def run_compliance_fc() -> dict:
+        """
+        Source 07 — Compliance & FC Scraper
+        ───────────────────────────────────
+        Downloads **Connectivity Grantee** PDFs.
+
+        Target : https://ctuil.in/complianceandfc
+        Output : uploads/compliance_and_fc/
+        """
+        from app.scrapers import source_07_ctuil_compliance_fc_scraper as script
+
+        return _execute(
+            script,
+            label="Compliance & FC",
+            output_dir="uploads/compliance_and_fc",
+        )
+
+    @staticmethod
+    def run_monitoring_connectivity() -> dict:
+        """
+        Source 08 — Monitoring / Revocations Scraper
+        ─────────────────────────────────────────────
+        Downloads Monitoring and Revocation PDFs.
+
+        Target : https://www.ctuil.in/revocations
+        Output : uploads/revocations/
+        """
+        from app.scrapers import source_08_monitoring_connectivity_scraper as script
+
+        return _execute(
+            script,
+            label="Monitoring / Revocations",
+            output_dir="uploads/revocations",
+        )
+
+    @staticmethod
+    def run_renewable_energy() -> dict:
+        """
+        Source 09 — Renewable Energy Scraper
+        ────────────────────────────────────
+        Downloads RE margin PDFs (Non-RE, RE Substations, Proposed RE)
+        and Bays Allocation PDFs.  Uses Playwright.
+
+        Target : https://www.ctuil.in/renewable-energy
+        Output : uploads/renewable_energy/{bays_allocation|margin}/
+        """
+        from app.scrapers import source_09_renewable_energy_scraper as script
+
+        return _execute(
+            script,
+            label="Renewable Energy",
+            output_dir="uploads/renewable_energy",
+        )
+
+    @staticmethod
+    def run_substation_bulk_consumers() -> dict:
+        """
+        Source 11 — Substation Bulk Consumers Scraper
+        ──────────────────────────────────────────────
+        Downloads Bulk Consumer PDFs.  Uses Playwright.
+
+        Target : https://ctuil.in/substation-bulk-consumers
+        Output : uploads/ctuil_bulk_consumers/
+        """
+        from app.scrapers import source_11_substation_bulk_consumers_scraper as script
+
+        return _execute(
+            script,
+            label="Substation Bulk Consumers",
+            output_dir="uploads/ctuil_bulk_consumers",
+        )
+
+    # ──────────────────────────────────────────────────────────
+    #  CEA Scrapers
+    # ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def run_transmission_reports() -> dict:
+        """
+        Source 06 — CEA Transmission Reports Scraper  (SYNCHRONOUS)
+        ────────────────────────────────────────────────────────────
+        Downloads RTM and TBCB Transmission Reports for the last
+        24 months using CEA's AJAX endpoint.
+
+        Target : https://cea.nic.in/transmission-reports/?lang=en
+        Output : uploads/transmission_reports/{year}/{month}/
+        """
+        from app.scrapers import source_06_transmission_reports_scraper as script
+
+        return _execute(
+            script,
+            label="CEA Transmission Reports",
+            output_dir="uploads/transmission_reports",
+        )
+
+    @staticmethod
+    def run_potential_re_zones() -> dict:
+        """
+        Source 10a — 500 GW RE Integration Scraper
+        ───────────────────────────────────────────
+        Downloads Transmission System PDFs for 500 GW Non-Fossil
+        Capacity integration.  Uses Playwright.
+
+        Target : https://cea.nic.in/psp___a_i/transmission-system-for-integration-of-over-500-gw-non-fossil-capacity-by-2030/?lang=en
+        Output : uploads/cea_500gw/
+        """
+        from app.scrapers import source_10a_potential_rezones_scraper as script
+
+        return _execute(
+            script,
+            label="500 GW RE Integration",
+            output_dir="uploads/cea_500gw",
+        )
+
+    @staticmethod
+    def run_nct_meetings() -> dict:
+        """
+        Source 10b — NCT Meeting Minutes Scraper
+        ─────────────────────────────────────────
+        Downloads National Committee on Transmission meeting
+        minutes PDFs from CEA.  Uses Playwright.
+
+        Target : https://cea.nic.in/comm-trans/national-committee-on-transmission/?lang=en
+        Output : uploads/cea_nct_minutes/
+        """
+        from app.scrapers import source_10b_nct_meetings_scraper as script
+
+        return _execute(
+            script,
+            label="NCT Meeting Minutes",
+            output_dir="uploads/cea_nct_minutes",
+        )
