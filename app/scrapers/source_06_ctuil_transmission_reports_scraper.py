@@ -12,7 +12,7 @@ from requests.exceptions import RequestException
 
 BASE_URL = "https://cea.nic.in/transmission-reports/?lang=en"
 AJAX_URL = "https://cea.nic.in/wp-admin/admin-ajax.php"
-BASE_DIR = "uploads/transmission_reports"
+BASE_DIR = "uploads/CTUIL-Transmission-Reports"
 MAX_DOWNLOAD_WORKERS = 5
 MAX_RETRIES = 4
 

@@ -6,7 +6,7 @@ from urllib.parse import unquote
 from playwright.async_api import async_playwright
 
 BASE_URL = "https://cea.nic.in/comm-trans/national-committee-on-transmission/?lang=en"
-BASE_DIR = "uploads/cea_nct_minutes"
+BASE_DIR = "uploads/CEA-NCT-Minutes"
 
 DOWNLOAD_SEM = asyncio.Semaphore(10)
 
@@ -14,8 +14,39 @@ DOWNLOAD_SEM = asyncio.Semaphore(10)
 # ===== safe filename =====
 def safe_filename(url: str) -> str:
     name = unquote(url.split("/")[-1].split("?")[0])
+
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
-    return name.strip("._") or "file.pdf"
+
+    # split ext
+    if "." in name:
+        stem, ext = name.rsplit(".", 1)
+        ext = "." + ext.lower()
+    else:
+        stem, ext = name, ".pdf"
+
+    # ==== CLEAN STEM ====
+    stem = stem.replace("_", " ")
+    stem = re.sub(r"\s+", " ", stem).strip()
+
+    m = re.search(r"\b(\d{1,3})(st|nd|rd|th)\b", stem, re.I)
+
+    if m:
+        ordinal = f"{m.group(1)}{m.group(2).lower()}"
+        return f"{ordinal}_NCT_MoM{ext}"
+
+    m = re.search(r"\b(\d{1,3})\b", stem)
+    if m:
+        num = int(m.group(1))
+
+        # convert to ordinal
+        if 10 <= num % 100 <= 20:
+            suffix = "th"
+        else:
+            suffix = {1: "st", 2: "nd", 3: "rd"}.get(num % 10, "th")
+
+        return f"{num}{suffix}_NCT_MoM{ext}"
+
+    return f"{stem}{ext}" if stem else f"file{ext}"
 
 # ===== Extract Links =====
 async def extract_links():

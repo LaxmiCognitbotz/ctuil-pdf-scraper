@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 
 PAGE_URL   = "https://ctuil.in/regenerators"
 BASE_URL   = "https://ctuil.in"
-TARGET_DIR = "uploads/Effective_Date_Wise"
+TARGET_DIR = "uploads/CTUIL-Regenerators-Effective-Date-wise"
 
 DOWNLOAD_SEM = asyncio.Semaphore(10)
 
@@ -31,8 +31,12 @@ def safe_filename(url: str) -> str:
 def safe_month(raw: str) -> str:
     return re.sub(r'[<>:"/\\|?*\x00-\x1f\s]', "_", raw.strip())
 
+def canonical_display_name(month: str) -> str:
+    # One file per month: keep naming stable and strip all timestamp/noise from source filenames.
+    return f"{month}_RE effectiveness.pdf"
+
 def make_display_name(month: str, url: str) -> str:
-    return f"{month}_{safe_filename(url)}"
+    return canonical_display_name(month)
 
 # ==== Fetch Page ====
 async def fetch_rendered_html() -> str:
@@ -125,13 +129,30 @@ def reorder_and_plan(dest_dir: str, ordered_links: list) -> list:
             continue
         parts = fname.split("_", 1)
         display_name = parts[1] if len(parts) == 2 and parts[0].isdigit() else fname
-        existing_map[display_name] = fname
+
+        # Normalize legacy names like:
+        #   Dec-25_177157746921Tobemadeeffective_CMU_Dec25.pdf
+        #   Oct-25_176586184113pdf_RE effectiveness Oct 25.pdf
+        # into:
+        #   Dec-25_RE effectiveness.pdf
+        if "_" in display_name:
+            month_part = display_name.split("_", 1)[0]
+            normalized = canonical_display_name(month_part)
+            existing_map.setdefault(normalized, fname)
+
+        existing_map.setdefault(display_name, fname)
 
     to_download = []
     seen = set()
+    month_counts = {}
 
     for counter, (month, url) in enumerate(ordered_links, start=1):
+        # If the site lists more than one PDF for the same month, keep them unique but stable.
+        month_counts[month] = month_counts.get(month, 0) + 1
         display_name = make_display_name(month, url)
+        if month_counts[month] > 1:
+            base, ext = display_name.rsplit(".", 1)
+            display_name = f"{base}-{month_counts[month]}.{ext}"
         new_fname    = f"{counter:02d}_{display_name}"
         new_path     = os.path.join(dest_dir, new_fname)
 

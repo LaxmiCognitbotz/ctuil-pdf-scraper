@@ -8,7 +8,7 @@ from urllib.parse import urljoin, unquote
 
 # ==== CONFIG ====
 BASE_URL = "https://ctuil.in/complianceandfc"
-DOWNLOAD_DIR = "uploads/compliance_and_fc"
+DOWNLOAD_DIR = "uploads/CTUIL-Compliance-PDFs"
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
@@ -18,8 +18,24 @@ DOWNLOAD_SEM = asyncio.Semaphore(10)
 # ==== Safe Filename ====
 def safe_filename(url: str) -> str:
     name = unquote(url.split("/")[-1].split("?")[0])
+
+    # remove illegal chars
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
-    return name.strip("._") or "file.pdf"
+
+    # split extension
+    if "." in name:
+        stem, ext = name.rsplit(".", 1)
+        ext = "." + ext.lower()
+    else:
+        stem, ext = name, ".pdf"
+
+    # removes long leading numeric sequences like 176657025776
+    stem = re.sub(r"^\d{6,}", "", stem)
+
+    # clean leftover separators/spaces
+    stem = stem.lstrip("_- ").strip()
+
+    return f"{stem}{ext}" if stem else f"file{ext}"
 
 # ==== Fetch Main Links ====
 def fetch_main_links():

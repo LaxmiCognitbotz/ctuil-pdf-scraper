@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 
 # ==== Config ====
 BASE_URL = "https://ctuil.in/ists-consultation-meeting"
-OUTPUT_DIR = "uploads/ists_consultation_meeting"
+OUTPUT_DIR = "uploads/CTUIL-ISTS-CMETS"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
@@ -45,6 +45,72 @@ def safe_filename(url: str) -> str:
     name = unquote(url.split("/")[-1].split("?")[0])
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
     return name.strip("._") or "file.pdf"
+
+def extract_meeting_label(stem: str, doc_type: str) -> str:
+    stem = re.sub(r"^\d+[_\-\s]*", "", stem).strip()
+    stem = stem.replace("_", " ")
+    stem = re.sub(r"\s+", " ", stem).strip()
+
+    if doc_type == "Agenda":
+        stem = re.sub(r"(?i)^meeting\s+notice\s*&\s*agenda\s*(for)?\s*", "", stem).strip()
+        stem = re.sub(r"(?i)^notice\s*&\s*agenda\s*(for)?\s*", "", stem).strip()
+        stem = re.sub(r"(?i)^agenda\s*(for)?\s*", "", stem).strip()
+    else:
+        stem = re.sub(r"(?i)^minutes\s*(of)?\s*", "", stem).strip()
+        stem = re.sub(r"(?i)^mom\s*(of)?\s*", "", stem).strip()
+
+    meeting_match = re.search(
+        r"(\d{1,3}(?:st|nd|rd|th)\s+CMETS-[A-Za-z]+)",
+        stem,
+        re.IGNORECASE,
+    )
+    if meeting_match:
+        meeting_label = meeting_match.group(1)
+    else:
+        special_match = re.search(
+            r"(Special\s+CMETS-[A-Za-z]+)",
+            stem,
+            re.IGNORECASE,
+        )
+        if special_match:
+            meeting_label = special_match.group(1)
+        else:
+            meeting_label = stem
+
+    return re.sub(r"\s+", " ", meeting_label).strip()
+
+
+def formatted_filename(doc_type: str, url: str) -> str:
+    original = safe_filename(url)
+
+    if "." in original:
+        stem, ext = original.rsplit(".", 1)
+        ext = "." + ext.lower()
+    else:
+        stem, ext = original, ".pdf"
+
+    meeting_label = extract_meeting_label(stem, doc_type)
+
+    return f"{doc_type}_{meeting_label}{ext}"
+
+
+def ensure_region_dir(region: str) -> str:
+    new_dir = os.path.join(OUTPUT_DIR, region)
+    legacy_dir = os.path.join(OUTPUT_DIR, region.replace(" ", "_"))
+
+    if os.path.isdir(legacy_dir) and legacy_dir != new_dir:
+        os.makedirs(new_dir, exist_ok=True)
+        for name in os.listdir(legacy_dir):
+            src = os.path.join(legacy_dir, name)
+            dst = os.path.join(new_dir, name)
+            if not os.path.exists(dst):
+                os.rename(src, dst)
+        try:
+            os.rmdir(legacy_dir)
+        except OSError:
+            pass
+
+    return new_dir
 
 # ==== Fetch HTML ====
 async def async_fetch(session, url):
@@ -137,20 +203,28 @@ def get_total_pages(html: str) -> int:
     return 1
 
 # ==== Reorder Files (Shift Logic) ====
-def reorder_files(dest_dir, urls):
+def reorder_files(dest_dir, urls, doc_type):
     os.makedirs(dest_dir, exist_ok=True)
 
     # ==== Map existing files ====
     existing_map = {}
     for f in os.listdir(dest_dir):
-        if "_" in f:
-            original = f.split("_", 1)[1]
-            existing_map[original] = f
+        lookup_name = f.split("_", 1)[1] if "_" in f and f.split("_", 1)[0].isdigit() else f
+        existing_map[lookup_name] = f
+
+        if "." in lookup_name:
+            lookup_stem, lookup_ext = lookup_name.rsplit(".", 1)
+            lookup_ext = "." + lookup_ext.lower()
+        else:
+            lookup_stem, lookup_ext = lookup_name, ".pdf"
+
+        normalized_name = f"{doc_type}_{extract_meeting_label(lookup_stem, doc_type)}{lookup_ext}"
+        existing_map.setdefault(normalized_name, f)
 
     counter = 1
 
     for url in urls:
-        original_name = safe_filename(url)
+        original_name = formatted_filename(doc_type, url)
         new_name = f"{counter:02d}_{original_name}"
         new_path = os.path.join(dest_dir, new_name)
 
@@ -170,7 +244,7 @@ def reorder_files(dest_dir, urls):
 async def scrape_region(session, region, tab_key):
     print(f"\n=== {region} ===")
 
-    region_dir = os.path.join(OUTPUT_DIR, region.replace(" ", "_"))
+    region_dir = ensure_region_dir(region)
 
     first_url = f"{BASE_URL}?p=ajax&page=1&tab={tab_key}"
     first_html = await async_fetch(session, first_url)
@@ -198,7 +272,7 @@ async def scrape_region(session, region, tab_key):
         urls = collected[doc_type]
         dest_dir = os.path.join(region_dir, doc_type)
 
-        for url, dest in reorder_files(dest_dir, urls):
+        for url, dest in reorder_files(dest_dir, urls, doc_type):
             download_tasks.append(
                 async_download(session, url, dest)
             )

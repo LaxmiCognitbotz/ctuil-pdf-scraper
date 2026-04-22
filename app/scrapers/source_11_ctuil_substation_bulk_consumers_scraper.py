@@ -6,7 +6,7 @@ from urllib.parse import unquote
 from playwright.async_api import async_playwright
 
 BASE_URL = "https://ctuil.in/substation-bulk-consumers"
-BASE_DIR = "uploads/ctuil_bulk_consumers"
+BASE_DIR = "uploads/CTUIL-Bulk-Consumers"
 
 DOWNLOAD_SEM = asyncio.Semaphore(10)
 
@@ -15,7 +15,56 @@ DOWNLOAD_SEM = asyncio.Semaphore(10)
 def safe_filename(url: str) -> str:
     name = unquote(url.split("/")[-1].split("?")[0])
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
-    return name.strip("._") or "file.pdf"
+
+    # split extension
+    if "." in name:
+        stem, ext = name.rsplit(".", 1)
+        ext = "." + ext.lower()
+    else:
+        stem, ext = name, ".pdf"
+
+    # remove timestamp
+    stem = re.sub(r"^\d{6,}", "", stem).lstrip("_- ").strip()
+
+    # normalize
+    stem = stem.replace("_", " ")
+    stem = re.sub(r"\s+", " ", stem).strip()
+
+    # ===== Extract Date =====
+    date = None
+
+    # dd-mm-yyyy
+    m = re.search(r"(\d{2}-\d{2}-\d{4})", stem)
+    if m:
+        date = m.group(1)
+
+    # yyyy mm → convert to last day
+    if not date:
+        m = re.search(r"(20\d{2})[\s_]?(\d{2})", stem)
+        if m:
+            year = int(m.group(1))
+            month = int(m.group(2))
+
+            if month in [1,3,5,7,8,10,12]:
+                day = 31
+            elif month in [4,6,9,11]:
+                day = 30
+            else:
+                day = 28
+
+            date = f"{day:02d}-{month:02d}-{year}"
+
+    # ddmmyyyy
+    if not date:
+        m = re.search(r"(\d{2})(\d{2})(20\d{2})", stem)
+        if m:
+            date = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+
+    # final name
+    if date:
+        return f"Bulk Consumer {date}{ext}"
+
+    return f"Bulk Consumer{ext}"
 
 
 # ===== Extract Links =====
@@ -76,12 +125,6 @@ async def async_download(session, url, dest):
 def reorder_and_plan(dest_dir, urls):
     os.makedirs(dest_dir, exist_ok=True)
 
-    existing = {}
-    for f in os.listdir(dest_dir):
-        if "_" in f:
-            original = f.split("_", 1)[1]
-            existing[original] = f
-
     tasks = []
     counter = 1
 
@@ -90,12 +133,7 @@ def reorder_and_plan(dest_dir, urls):
         new_name = f"{counter:02d}_{name}"
         new_path = os.path.join(dest_dir, new_name)
 
-        if name in existing:
-            old_path = os.path.join(dest_dir, existing[name])
-            if old_path != new_path:
-                os.rename(old_path, new_path)
-        else:
-            tasks.append((url, new_path))
+        tasks.append((url, new_path))
 
         counter += 1
 
@@ -114,7 +152,7 @@ async def main():
     async with aiohttp.ClientSession(connector=connector) as session:
         planned = reorder_and_plan(BASE_DIR, urls)
 
-        print(f"New files to download: {len(planned)}")
+        print(f"Files to download: {len(planned)}")
 
         tasks = [async_download(session, url, dest) for url, dest in planned]
         await asyncio.gather(*tasks)

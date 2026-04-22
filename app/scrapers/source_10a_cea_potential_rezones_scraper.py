@@ -8,7 +8,7 @@ from urllib.parse import unquote
 from playwright.async_api import async_playwright
 
 BASE_URL = "https://cea.nic.in/psp___a_i/transmission-system-for-integration-of-over-500-gw-non-fossil-capacity-by-2030/?lang=en"
-BASE_DIR = "uploads/cea_500gw"
+BASE_DIR = "uploads/CEA-500GW"
 
 DOWNLOAD_SEM = asyncio.Semaphore(10)
 

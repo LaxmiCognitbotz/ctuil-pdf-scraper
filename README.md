@@ -78,69 +78,59 @@ The API starts at `http://localhost:8000`. Visit `http://localhost:8000/docs` fo
 | `POST` | `/api/v1/scrape/potential-re-zones` | 500 GW RE Integration PDFs |
 | `POST` | `/api/v1/scrape/nct-meetings` | NCT meeting minutes |
 
-## Response Format
-
-Every endpoint returns:
-
-```json
-{
-  "status": true,
-  "message": "RE Generators scraper completed successfully.",
-  "data": {
-    "script": "source_03_regenerators_scraper",
-    "execution_time_seconds": 18.42,
-    "output_dir": "uploads/Effective_Date_Wise"
-  },
-  "error": null,
-  "timestamp": "2026-04-20T10:29:50.093180+00:00"
-}
-```
-
-On failure, `status` is `false` and `error` contains `code` and `detail` (full traceback).
-
 ## Project Structure
 
 ```
 ctuil-pdf-scraper/
-├── main.py                    # App entry point, health endpoint, tag ordering
+├── main.py                    # App entry point, router registration
 ├── pyproject.toml             # Dependencies & project metadata
 │
 ├── app/
 │   ├── __init__.py
-│   ├── api.py                 # Route definitions (routes only)
 │   ├── catalog.py             # Scraper metadata for discovery endpoint
-│   ├── helpers.py             # Shared request handler & error responses
+│   ├── helpers.py             # Shared request handler, execute_scraper & error responses
 │   ├── schemas.py             # APIResponse & APIError models
-│   ├── services.py            # 12 service methods (one per scraper)
+│   │
+│   ├── modules/
+│   │   ├── health/
+│   │   │   └── routes.py      # GET /  +  GET /api/v1/scrapers
+│   │   │
+│   │   ├── ctuil/
+│   │   │   ├── routes.py      # 9 CTUIL POST endpoints
+│   │   │   └── services.py    # 9 CTUIL service methods
+│   │   │
+│   │   └── cea/
+│   │       ├── routes.py      # 3 CEA POST endpoints
+│   │       └── services.py    # 3 CEA service methods
 │   │
 │   └── scrapers/              # Original scripts (untouched)
 │       ├── __init__.py
-│       ├── source_01_ists_consultation_meeting_scrapr.py
-│       ├── source_02_ists_joint_coordination_meeting_scraper.py
-│       ├── source_03_regenerators_scraper.py
-│       ├── source_04_reallocation_meetings_scraper.py
-│       ├── source_05_bidding_calender_scraper.py
-│       ├── source_06_transmission_reports_scraper.py
+│       ├── source_01_ctuil_ists_consultation_meeting_scraper.py
+│       ├── source_02_ctuil_ists_joint_coordination_meeting_scraper.py
+│       ├── source_03_ctuil_regenerators_scraper.py
+│       ├── source_04_ctuil_reallocation_meetings_scraper.py
+│       ├── source_05_ctuil_bidding_calender_scraper.py
+│       ├── source_06_ctuil_transmission_reports_scraper.py
 │       ├── source_07_ctuil_compliance_fc_scraper.py
-│       ├── source_08_monitoring_connectivity_scraper.py
-│       ├── source_09_renewable_energy_scraper.py
-│       ├── source_10a_potential_rezones_scraper.py
-│       ├── source_10b_nct_meetings_scraper.py
-│       └── source_11_substation_bulk_consumers_scraper.py
+│       ├── source_08_ctuil_monitoring_connectivity_scraper.py
+│       ├── source_09_ctuil_renewable_energy_scraper.py
+│       ├── source_10a_cea_potential_rezones_scraper.py
+│       ├── source_10b_cea_nct_meetings_scraper.py
+│       └── source_11_ctuil_substation_bulk_consumers_scraper.py
 │
 └── uploads/                   # All downloaded PDFs (auto-created)
-    ├── ists_consultation_meeting/
-    ├── ists_joint_coordination_meeting/
-    ├── Effective_Date_Wise/
-    ├── reallocation_meetings/
-    ├── bidding_calendar/
-    ├── compliance_and_fc/
-    ├── revocations/
-    ├── renewable_energy/
-    ├── ctuil_bulk_consumers/
-    ├── transmission_reports/
-    ├── cea_500gw/
-    └── cea_nct_minutes/
+    ├── CTUIL-ISTS-CMETS/
+    ├── CTUIL-ISTS-JCC/
+    ├── CTUIL-Regenerators-Effective-Date-wise/
+    ├── CTUIL-Reallocation-Meetings/
+    ├── CTUIL-Bidding-Calendar/
+    ├── CTUIL-Compliance-PDFs/
+    ├── CTUIL-Revocations-PDFs/
+    ├── CTUIL-Renewable-Energy/
+    ├── CTUIL-Bulk-Consumers/
+    ├── CTUIL-Transmission-Reports/
+    ├── CEA-500GW/
+    └── CEA-NCT-Minutes/
 ```
 
 ## Tech Stack

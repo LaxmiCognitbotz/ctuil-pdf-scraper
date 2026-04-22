@@ -6,18 +6,64 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, unquote
 
-BASE_URL = "https://www.ctuil.in/revocations"
-DOWNLOAD_DIR = "uploads/revocations"
+BASE_URL = "https://www.ctuil.in/bidding-calendar"
+DOWNLOAD_DIR = "uploads/CTUIL-Bidding-Calendar"
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 DOWNLOAD_SEM = asyncio.Semaphore(10)
 
 
+# ==== Safe Filename ====
 def safe_filename(url: str) -> str:
     name = unquote(url.split("/")[-1].split("?")[0])
+
+    # remove illegal chars
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
-    return name.strip("._") or "file.pdf"
+
+    # split extension
+    if "." in name:
+        stem, ext = name.rsplit(".", 1)
+        ext = "." + ext.lower()
+    else:
+        stem, ext = name, ".pdf"
+
+    stem = stem.replace("_", " ")
+
+    # remove leading random numbers
+    stem = re.sub(r"^\d+\s*", "", stem)
+
+    # remove junk words
+    stem = re.sub(
+        r"(?i)\b(annexure[-\s]*a|draft|approved|final|dated|as on dated|as on)\b",
+        "",
+        stem,
+    )
+
+    # normalize spaces
+    stem = re.sub(r"\s+", " ", stem).strip()
+
+    # ---- EXTRACT DATE ----
+    date_match = re.search(
+        r"(\d{2}[-\.]\d{2}[-\.]\d{2,4})", stem
+    )
+
+    date = None
+    if date_match:
+        date = date_match.group(1).replace(".", "-")
+
+        # normalize 2-digit year → 4-digit
+        parts = date.split("-")
+        if len(parts[2]) == 2:
+            year = int(parts[2])
+            parts[2] = f"20{year:02d}"
+        date = "-".join(parts)
+
+    # ---- BUILD FINAL NAME ----
+    if date:
+        return f"Bidding Calendar {date}{ext}"
+    else:
+        return f"Bidding Calendar{ext}"
 
 # ==== Fetch Links ====
 def fetch_pdf_links():
@@ -29,22 +75,16 @@ def fetch_pdf_links():
     pdf_links = []
     seen = set()
 
-    # target only second column links
-    for row in soup.select("table tr"):
-        cols = row.find_all("td")
-        if len(cols) < 2:
-            continue
-
-        a = cols[1].find("a", href=True)
-        if not a:
-            continue
-
+    for a in soup.find_all("a", href=True):
+        text = a.get_text(strip=True).lower()
         href = a["href"]
-        full_url = urljoin(BASE_URL, href)
 
-        if "pdf" in full_url.lower() and full_url not in seen:
-            seen.add(full_url)
-            pdf_links.append(full_url)
+        if "bidding calendar" in text and href.lower().endswith(".pdf"):
+            full_url = urljoin(BASE_URL, href)
+
+            if full_url not in seen:
+                seen.add(full_url)
+                pdf_links.append(full_url)
 
     return pdf_links
 
@@ -73,8 +113,6 @@ def reorder_and_plan(dest_dir, urls):
     os.makedirs(dest_dir, exist_ok=True)
 
     existing = {}
-
-    # map original filename → existing file
     for f in os.listdir(dest_dir):
         if "_" in f:
             original = f.split("_", 1)[1]
@@ -106,7 +144,7 @@ async def main():
 
     print(f"Total PDFs found: {len(urls)}")
 
-    # IMPORTANT: site already returns latest first
+    # IMPORTANT: assume site already gives latest first
     planned = reorder_and_plan(DOWNLOAD_DIR, urls)
 
     print(f"New files to download: {len(planned)}")

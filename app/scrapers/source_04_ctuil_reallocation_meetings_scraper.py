@@ -6,7 +6,7 @@ from urllib.parse import unquote, urljoin, quote
 from playwright.async_api import async_playwright
 
 BASE_URL = "https://www.ctuil.in/reallocation_meetings"
-BASE_DIR = "uploads/reallocation_meetings"
+BASE_DIR = "uploads/CTUIL-Reallocation-Meetings"
 
 DOWNLOAD_SEM = asyncio.Semaphore(10)
 
@@ -17,19 +17,65 @@ def safe_filename(url: str) -> str:
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
     return name.strip("._") or "file.pdf"
 
+
+def strip_leading_timestamp(filename: str) -> str:
+    # Remove long numeric prefixes used as timestamps/ids (keep meaningful small ordinals like "2nd ...").
+    if "." in filename:
+        stem, ext = filename.rsplit(".", 1)
+        ext = "." + ext
+    else:
+        stem, ext = filename, ""
+
+    stem = re.sub(r"^\d{9,}\s*(?:pdf)?[_\-\s]*", "", stem, flags=re.IGNORECASE).strip()
+    stem = re.sub(r"\s+", " ", stem).strip()
+    return f"{stem}{ext}" if stem else filename
+
+
+def display_name_from_url(url: str) -> str:
+    return strip_leading_timestamp(safe_filename(url))
+
+
+def ensure_doc_type_dir(region: str, doc_type: str) -> str:
+    new_dir = os.path.join(BASE_DIR, region, doc_type)
+    legacy_dir = os.path.join(BASE_DIR, region, doc_type.lower())
+
+    if os.path.isdir(legacy_dir) and legacy_dir != new_dir:
+        os.makedirs(new_dir, exist_ok=True)
+        for name in os.listdir(legacy_dir):
+            src = os.path.join(legacy_dir, name)
+            dst = os.path.join(new_dir, name)
+            if not os.path.exists(dst):
+                os.rename(src, dst)
+        try:
+            os.rmdir(legacy_dir)
+        except OSError:
+            pass
+
+    return new_dir
+
 # ==== Incremental Logic ====
 def apply_incremental_update(dest_dir, urls):
     os.makedirs(dest_dir, exist_ok=True)
 
-    # normalize incoming
-    ordered = [safe_filename(u) for u in urls]
+    # normalize incoming (strip timestamp right after the NN_ prefix)
+    ordered = [display_name_from_url(u) for u in urls]
+
+    # If the same display name appears multiple times, keep them unique but stable.
+    seen_counts = {}
+    for i, name in enumerate(ordered):
+        seen_counts[name] = seen_counts.get(name, 0) + 1
+        if seen_counts[name] > 1 and "." in name:
+            base, ext = name.rsplit(".", 1)
+            ordered[i] = f"{base}-{seen_counts[name]}.{ext}"
+        elif seen_counts[name] > 1:
+            ordered[i] = f"{name}-{seen_counts[name]}"
 
     # existing files
     existing = {}
     for f in os.listdir(dest_dir):
-        if "_" in f:
-            original = f.split("_", 1)[1]
-            existing[original] = f
+        lookup = f.split("_", 1)[1] if "_" in f and f.split("_", 1)[0].isdigit() else f
+        existing.setdefault(lookup, f)
+        existing.setdefault(strip_leading_timestamp(lookup), f)
 
     download_list = []
 
@@ -42,7 +88,8 @@ def apply_incremental_update(dest_dir, urls):
             if old_path != new_path:
                 os.rename(old_path, new_path)
         else:
-            download_list.append((original_name, new_path))
+            # Find the matching URL for this display name (including any "-2" suffix).
+            download_list.append((urls[idx - 1], new_path))
 
     return download_list
 
@@ -87,7 +134,7 @@ async def extract_all_regions(page):
                 if href and ".pdf" in href.lower():
                     href = urljoin(BASE_URL, href)
                     href = quote(href, safe=":/")
-                    region_links.append((region, "agenda", href))
+                    region_links.append((region, "Agenda", href))
 
             # ===== Minutes =====
             minutes_a = await cols[2].query_selector("a")
@@ -96,7 +143,7 @@ async def extract_all_regions(page):
                 if href and ".pdf" in href.lower():
                     href = urljoin(BASE_URL, href)
                     href = quote(href, safe=":/")
-                    region_links.append((region, "minutes", href))
+                    region_links.append((region, "Minutes", href))
 
         if not region_links:
             print(f"{region} → No PDFs (skipping)")
@@ -169,15 +216,11 @@ async def main():
         tasks = []
 
         for (region, doc_type), urls in grouped.items():
-            dest_dir = os.path.join(BASE_DIR, region, doc_type)
+            dest_dir = ensure_doc_type_dir(region, doc_type)
 
             # Apply incremental logic
             to_download = apply_incremental_update(dest_dir, urls)
-
-            url_map = {safe_filename(u): u for u in urls}
-
-            for original_name, dest in to_download:
-                url = url_map[original_name]
+            for url, dest in to_download:
                 tasks.append(async_download(session, url, dest))
 
         await asyncio.gather(*tasks)

@@ -6,15 +6,56 @@ from urllib.parse import unquote
 from playwright.async_api import async_playwright
 
 BASE_URL = "https://www.ctuil.in/renewable-energy"
-BASE_DIR = "uploads/renewable_energy"
+BASE_DIR = "uploads/CTUIL-Renewable-Energy"
 
 DOWNLOAD_SEM = asyncio.Semaphore(10)
 
 
 def safe_filename(url: str) -> str:
     name = unquote(url.split("/")[-1].split("?")[0])
+
+    # remove illegal chars
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
-    return name.strip("._") or "file.pdf"
+
+    # split ext
+    if "." in name:
+        stem, ext = name.rsplit(".", 1)
+        ext = "." + ext.lower()
+    else:
+        stem, ext = name, ".pdf"
+
+    stem = re.sub(r"^\d{6,}", "", stem).lstrip("_- ").strip()
+
+    # normalize
+    stem = stem.replace("_", " ")
+    stem = re.sub(r"\s+", " ", stem).strip()
+
+    lower = stem.lower()
+
+    if "allocation of bays" in lower:
+        stem = re.sub(r"(?i)\b(approved|final|r\d+)\b", "", stem)
+        stem = re.sub(r"\s+", " ", stem).strip()
+        return f"{stem}{ext}"
+
+    if "non re ss margin" in lower:
+        stem = re.sub(r"(?i)\b(approved|final|rev[-\d]*)\b", "", stem)
+        stem = re.sub(r"[-_]", " ", stem)
+        stem = re.sub(r"\s+", " ", stem).strip()
+        return f"{stem}{ext}"
+
+    if "re ss margin" in lower:
+        stem = re.sub(r"(?i)^re\s+", "", stem)  # remove leading RE
+        stem = re.sub(r"(?i)\b(approved|final|rev[-\d]*)\b", "", stem)
+        stem = re.sub(r"[-_]", " ", stem)
+        stem = re.sub(r"\s+", " ", stem).strip()
+        return f"{stem}{ext}"
+
+    if "status of margins" in lower:
+        stem = re.sub(r"\s+", " ", stem).strip()
+        return f"{stem}{ext}"
+
+    # fallback (safe)
+    return f"{stem}{ext}" if stem else f"file{ext}"
 
 # ===== Extract Links =====
 async def extract_links():
@@ -148,10 +189,10 @@ async def main():
     links_data = await extract_links()
 
     folder_map = {
-        "bays": os.path.join(BASE_DIR, "bays_allocation"),
-        "non_re": os.path.join(BASE_DIR, "margin", "non_re"),
-        "re_substations": os.path.join(BASE_DIR, "margin", "re_substations"),
-        "proposed_re": os.path.join(BASE_DIR, "margin", "proposed_re"),
+        "bays": os.path.join(BASE_DIR, "Bays Allocation"),
+        "non_re": os.path.join(BASE_DIR, "Margin", "Non-RE"),
+        "re_substations": os.path.join(BASE_DIR, "Margin", "RE Substations"),
+        "proposed_re": os.path.join(BASE_DIR, "Margin", "Proposed RE"),
     }
 
     async with aiohttp.ClientSession() as session:

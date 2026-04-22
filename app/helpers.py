@@ -2,8 +2,11 @@
 Helpers - shared utilities for API route handlers.
 """
 
+import asyncio
 import logging
+import time
 import traceback
+from typing import Any
 
 from fastapi import status
 from fastapi.responses import JSONResponse
@@ -11,6 +14,33 @@ from fastapi.responses import JSONResponse
 from app.schemas import APIResponse
 
 logger = logging.getLogger(__name__)
+
+
+# ==== Scraper execution helper ====
+def execute_scraper(script_module: Any, label: str, output_dir: str) -> dict:
+    """
+    Run a scraper module's ``main()`` (sync or async) and return
+    execution metadata.  Used by every service method.
+    """
+    is_async = asyncio.iscoroutinefunction(script_module.main)
+    script_name = script_module.__name__.rsplit(".", 1)[-1]
+
+    logger.info("[START] %s  (module=%s, async=%s)", label, script_name, is_async)
+    start = time.time()
+
+    if is_async:
+        asyncio.run(script_module.main())
+    else:
+        script_module.main()
+
+    elapsed = round(time.time() - start, 2)
+    logger.info("[DONE]  %s  completed in %ss", label, elapsed)
+
+    return {
+        "script": script_name,
+        "execution_time_seconds": elapsed,
+        "output_dir": output_dir,
+    }
 
 # Standard error response schema for OpenAPI docs
 ERROR_RESPONSES = {
