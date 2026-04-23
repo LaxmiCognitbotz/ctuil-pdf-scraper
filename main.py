@@ -6,6 +6,7 @@ from app.catalog import SCRAPER_CATALOG
 from app.schemas import APIResponse
 from app.modules.ctuil.routes import router as ctuil_router
 from app.modules.cea.routes import router as cea_router
+from app.modules.pfcclindia.routes import router as pfcclindia_router
 
 # ==== Logging ====
 logging.basicConfig(
@@ -16,7 +17,7 @@ logging.basicConfig(
 
 # ==== FastAPI App ====
 app = FastAPI(
-    title="CTUIL / CEA Scraper API",
+    title="CTUIL / CEA / PFCCLINDIA Scraper API",
     description=(
         "REST API wrapping all PDF scraper modules. "
     ),
@@ -51,6 +52,7 @@ def list_scrapers():
 # ==== Register routers ====
 app.include_router(ctuil_router, prefix="/api/v1")
 app.include_router(cea_router, prefix="/api/v1")
+app.include_router(pfcclindia_router, prefix="/api/v1")
 
 
 if __name__ == "__main__":

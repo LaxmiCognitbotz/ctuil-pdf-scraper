@@ -89,4 +89,12 @@ SCRAPER_CATALOG = [
         "page_url": "https://cea.nic.in/comm-trans/national-committee-on-transmission/?lang=en",
         "output_dir": "uploads/CEA-NCT-Minutes",
     },
+    {
+        "endpoint": "/api/v1/scrape/pfcclindia-tender",
+        "label": "PFCCLINDIA Tender",
+        "source": "PFCCLINDIA",
+        "page_url": "https://www.pfcclindia.com/tender.php?AM2",
+        "output_dir": "uploads/PFCCLINDIA-TENDER",
+        "input_required": {"query": "Substring of the tender title to search for"},
+    },
 ]
