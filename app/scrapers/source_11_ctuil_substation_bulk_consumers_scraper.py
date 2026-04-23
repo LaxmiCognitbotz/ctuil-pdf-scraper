@@ -1,3 +1,8 @@
+"""
+Scraper for: https://www.ctuil.in/substation-bulk-consumers
+Download pdfs from the page.
+"""
+
 import os
 import re
 import asyncio

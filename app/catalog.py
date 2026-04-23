@@ -94,7 +94,7 @@ SCRAPER_CATALOG = [
         "label": "PFCCLINDIA Tender",
         "source": "PFCCLINDIA",
         "page_url": "https://www.pfcclindia.com/tender.php?AM2",
-        "output_dir": "uploads/PFCCLINDIA-TENDER",
+        "output_dir": "uploads/PFCCL-INDIA-TENDER",
         "input_required": {"query": "Substring of the tender title to search for"},
     },
 ]

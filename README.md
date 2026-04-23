@@ -146,7 +146,7 @@ ctuil-pdf-scraper/
     ├── CTUIL-Transmission-Reports/
     ├── CEA-500GW/
     ├── CEA-NCT-Minutes/
-    └── PFCCLINDIA-TENDER/         
+    └── PFCCL-INDIA-TENDER/         
 ```
 
 ## Tech Stack

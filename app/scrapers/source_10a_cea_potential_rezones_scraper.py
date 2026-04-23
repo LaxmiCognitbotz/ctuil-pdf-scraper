@@ -1,5 +1,7 @@
-# ===== in-progress script ====
-
+"""
+Scraper for: https://cea.nic.in/psp___a_i/transmission-system-for-integration-of-over-500-gw-non-fossil-capacity-by-2030/?lang=en
+Download pdfs from the page.
+"""
 import os
 import re
 import asyncio

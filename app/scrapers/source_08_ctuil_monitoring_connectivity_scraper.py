@@ -1,3 +1,11 @@
+"""
+Scraper for: https://www.ctuil.in/revocations
+
+Downloads and organizes PDFs into two specific folders:
+1. Expected Revocation Under 24.6
+2. Connectivity Gratees Excluded From Revocation
+"""
+
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed

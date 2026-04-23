@@ -1,3 +1,8 @@
+"""
+Scraper for: https://cea.nic.in/comm-trans/national-committee-on-transmission/?lang=en
+Download Minutes and MoM pdfs from the page.
+"""
+
 import os
 import re
 import asyncio
@@ -24,7 +29,7 @@ def safe_filename(url: str) -> str:
     else:
         stem, ext = name, ".pdf"
 
-    # ==== CLEAN STEM ====
+    # ==== Clean stem ====
     stem = stem.replace("_", " ")
     stem = re.sub(r"\s+", " ", stem).strip()
 

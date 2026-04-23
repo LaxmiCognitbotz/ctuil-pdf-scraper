@@ -1,3 +1,7 @@
+"""
+Scraper for: https://ctuil.in/complianceandfc
+Download PDFs from "Connectivity Grantees" table.
+"""
 import os
 import re
 import asyncio
@@ -6,7 +10,7 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, unquote
 
-# ==== CONFIG ====
+# ==== Config ====
 BASE_URL = "https://ctuil.in/complianceandfc"
 DOWNLOAD_DIR = "uploads/CTUIL-Compliance-PDFs"
 

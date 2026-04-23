@@ -1,3 +1,7 @@
+"""
+Scraper for: https://cea.nic.in/transmission-reports/?lang=en
+Download PDFs from "Transmission Reports" year wise for 2 years.
+"""
 import os
 import re
 import time

@@ -25,7 +25,7 @@ class PfcclIndiaScraperService:
         Postponement, Qualified, Amendment).
 
         Target : https://www.pfcclindia.com/tender.php?AM2
-        Output : uploads/PFCCLINDIA-TENDER/<folder_derived_from_query>/
+        Output : uploads/PFCCL-INDIA-TENDER/<folder_derived_from_query>/
         """
         from app.scrapers import source_10c_pfcclindia_tender_scraper as script
 
@@ -33,7 +33,7 @@ class PfcclIndiaScraperService:
         logger.info("[START] %s  (query=%r)", label, query)
         start = time.time()
 
-        output_dir = "uploads/PFCCLINDIA-TENDER"
+        output_dir = "uploads/PFCCL-INDIA-TENDER"
         out_path = Path(output_dir)
         out_path.mkdir(parents=True, exist_ok=True)
 

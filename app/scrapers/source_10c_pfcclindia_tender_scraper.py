@@ -1,26 +1,5 @@
 """
-PFCCL India Tender Scraper — FINAL
-====================================
-
-Flow:
-  1. User gives any substring of a tender title (exact, no breakdown).
-  2. Script finds all <ol><li> entries on the page whose <b> title
-     contains that substring (case-insensitive).
-  3. From the matched <li>, extracts every child <ul><li><a href> link.
-  4. Filters those links: keep only the ones whose LINK TEXT contains
-     at least one of these keywords (case-insensitive, boundary-safe):
-
-       Corrigendum | Extension | Successful | RFP | Postponement
-       Qualified   | Amendment
-
-  5. Downloads the filtered PDFs with a serial prefix:
-       01_rfp_cts_part_a_27-03-2026.pdf
-       02_notice-for-postponement-of-pre-bid-22-4-2026.pdf
-       …  (serial = order they appear in the page)
-
-Usage:
-  python source_10c_final.py --query "Lakadia (Phase-II: 7.5GW)"
-  python source_10c_final.py        # interactive
+PFCCL India Tender Scraper
 """
 
 from __future__ import annotations
@@ -44,7 +23,6 @@ try:
 except ImportError:
     sys.exit("Run: pip install requests")
 
-# ─────────────────────────────────────────────────────────────────────────────
 BASE_URL   = "https://www.pfcclindia.com"
 TENDER_URL = "https://www.pfcclindia.com/tender.php?AM2"
 UA = (
@@ -79,26 +57,14 @@ def keyword_in_text(link_text: str) -> str | None:
     return None
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# EXACT TITLE MATCH — full user input as substring, no tokenization
-# ─────────────────────────────────────────────────────────────────────────────
+# Exact title match — full user input as substring, no tokenization
 def title_matches(title: str, user_input: str) -> bool:
     return user_input.strip().lower() in title.strip().lower()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CHILD LINK EXTRACTOR — reads <ul><li><a> nodes inside a matched <li>
-# ─────────────────────────────────────────────────────────────────────────────
 def extract_child_links(li_element) -> list[dict]:
     """
-    Pull every PDF child link from a tender <li>.
-    Returns: [ { "text": str, "url": str }, … ]
-    in DOM order.
-
-    Handles:
-      1. <a href="…pdf"> inside child <ul><li>
-      2. onclick="window.open('…pdf')" in inner HTML
-      3. data-href / data-src attributes
+    Pull every PDF child link from a tender.
     """
     links: list[dict] = []
     seen: set[str] = set()
@@ -116,7 +82,7 @@ def extract_child_links(li_element) -> list[dict]:
             seen.add(url)
             links.append({"text": text.strip(), "url": url})
 
-    # ── 1. All <a href> inside child <ul>/<ol> lists ──────────────────────────
+    # ==== All <a href> inside child <ul>/<ol> lists ====
     for a in li_element.query_selector_all("ul li a[href], ol li a[href]"):
         href = (a.get_attribute("href") or "").strip()
         text = a.inner_text().strip()
@@ -124,7 +90,7 @@ def extract_child_links(li_element) -> list[dict]:
             full = href if href.startswith("http") else urljoin(BASE_URL, href)
             add(text, full)
 
-    # ── 2. onclick patterns in raw HTML ──────────────────────────────────────
+    # ==== onclick patterns in raw HTML ====
     raw = li_element.inner_html()
     for m in re.finditer(
         r"""(?:window\.open|location\.href\s*=|open\()\s*['"](.*?\.pdf[^'"]*?)['"]""",
@@ -134,7 +100,7 @@ def extract_child_links(li_element) -> list[dict]:
         full = url if url.startswith("http") else urljoin(BASE_URL, url)
         add(os.path.basename(urlparse(full).path), full)
 
-    # ── 3. data-href / data-src ───────────────────────────────────────────────
+    # ==== data-href / data-src ====
     for m in re.finditer(
         r"""data-(?:href|src|url)\s*=\s*['"](.*?\.pdf[^'"]*?)['"]""",
         raw, re.IGNORECASE
@@ -146,15 +112,8 @@ def extract_child_links(li_element) -> list[dict]:
     return links
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PAGE SCANNER
-# ─────────────────────────────────────────────────────────────────────────────
+# Page Scanner
 def scan_page(page, user_input: str) -> list[dict]:
-    """
-    Find every <ol><li> whose <b> title matches user_input.
-    Return list of { "sr_no": int, "title": str, "all_links": [...] }
-    sr_no = the actual numbered position on the page (ol start offset + li index).
-    """
     results = []
 
     # Each <ol> may have a start= attribute (e.g. <ol start="230">)
@@ -166,7 +125,7 @@ def scan_page(page, user_input: str) -> list[dict]:
 
         li_list = ol.query_selector_all(":scope > li")
         for li_idx, li in enumerate(li_list):
-            sr_no = ol_start + li_idx   # actual serial number on the page
+            sr_no = ol_start + li_idx
 
             bold  = li.query_selector("b, strong")
             title = bold.inner_text().strip() if bold else ""
@@ -194,9 +153,7 @@ def scan_page(page, user_input: str) -> list[dict]:
     return results
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PAGINATION
-# ─────────────────────────────────────────────────────────────────────────────
+# Pagination
 def paginate_all(page):
     sels = [
         "a:has-text('Next')", "a:has-text('»')", "a:has-text('›')",
@@ -232,16 +189,11 @@ def goto_retry(page, url: str, retries: int = 3, wait_ms: int = 4000):
                 raise
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# DOWNLOAD
-# ─────────────────────────────────────────────────────────────────────────────
+# Download
 def make_folder_name(user_input: str, max_len: int = 60) -> str:
     """
     Generate a short readable folder name from user input.
     Extracts: place names + GW capacity + Part-A/B suffix.
-    Example:
-      "...Lakadia (Phase-II: 7.5GW), Jam Khambhaliya (Phase-II: 5.5GW)..."
-      → "Lakadia_7.5GW_Khambhaliya_5.5GW_Jamnagar_1GW_Part-A"
     """
     text = user_input.strip()
 
@@ -260,7 +212,7 @@ def make_folder_name(user_input: str, max_len: int = 60) -> str:
     if place_cap:
         segments = []
         for place, cap in place_cap:
-            last_word = place.strip().split()[-1]   # e.g. "Lakadia"
+            last_word = place.strip().split()[-1]
             segments.append(f"{last_word}_{cap}")
         folder = "_".join(segments)
         if part:
@@ -296,9 +248,7 @@ def download_pdf(
         return False
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ORCHESTRATOR
-# ─────────────────────────────────────────────────────────────────────────────
+# Orchestrator
 def run(user_input: str, output_dir: Path):
     print(f"\nInput > {user_input}\n")
 
@@ -369,9 +319,6 @@ def run(user_input: str, output_dir: Path):
     print(f"  {save_dir.resolve()}\n")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CLI
-# ─────────────────────────────────────────────────────────────────────────────
 def main():
     ap = argparse.ArgumentParser(
         description="PFCCL Tender Scraper — exact match + keyword filter",
@@ -380,8 +327,8 @@ def main():
     )
     ap.add_argument("--query", "-q", default=None,
         help="Substring of the tender title to match (exact, no breakdown)")
-    ap.add_argument("--output", "-o", default="./uploads/PFCCLINDIA-TENDER",
-        help="Master output directory  (default: ./uploads/PFCCLINDIA-TENDER)")
+    ap.add_argument("--output", "-o", default="./uploads/PFCCL-INDIA-TENDER",
+        help="Master output directory  (default: ./uploads/PFCCL-INDIA-TENDER)")
     args = ap.parse_args()
 
     user_input = args.query

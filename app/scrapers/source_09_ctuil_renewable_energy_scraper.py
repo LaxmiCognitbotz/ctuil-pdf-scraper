@@ -1,3 +1,7 @@
+"""
+Scraper for: https://www.ctuil.in/renewable-energy
+Download pdfs from "Bays Allocation", "Connectivity margin in ists substations", "Proposed re integration" tables.
+"""
 import os
 import re
 import asyncio

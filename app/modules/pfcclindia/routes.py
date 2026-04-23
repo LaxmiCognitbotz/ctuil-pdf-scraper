@@ -19,7 +19,7 @@ router = APIRouter(tags=["PFCCL-INDIA Scrapers"])
         "Searches the PFCCLINDIA tender listing for entries whose title contains "
         "the given **query** substring, then downloads all matched PDFs filtered by "
         "keyword: *Corrigendum, Extension, Successful, RFP, Postponement, Qualified, Amendment*. "
-        "Files are saved to `uploads/PFCCLINDIA-TENDER/<folder>/`."
+        "Files are saved to `uploads/PFCCL-INDIA-TENDER/<folder>/`."
     ),
     responses=ERROR_RESPONSES,
 )

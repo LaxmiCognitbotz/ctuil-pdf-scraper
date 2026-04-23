@@ -1,3 +1,8 @@
+"""
+Scraper for: https://ctuil.in/reallocation_meetings
+Download PDFs from "Agenda" and "Minutes" columns for each region.
+"""
+
 import os
 import re
 import asyncio

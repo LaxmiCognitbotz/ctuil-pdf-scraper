@@ -1,3 +1,8 @@
+"""
+Scraper for: https://www.ctuil.in/bidding-calendar
+Download PDFs from "Bidding Calendar" table.
+"""
+
 import os
 import re
 import asyncio
