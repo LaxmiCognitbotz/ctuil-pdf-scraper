@@ -141,6 +141,12 @@ def scan_page(page, user_input: str) -> list[dict]:
                 continue
 
             if title_matches(title, user_input):
+                # ==== Title-level gate ====
+                # If "Consultant" in title → skip entirely
+                if re.search(r'(?<![A-Za-z])Consultant(?![A-Za-z])', title, re.IGNORECASE):
+                    print(f"  Skipped tender #{sr_no} (Consultant found in title)")
+                    continue
+
                 all_links = extract_child_links(li)
                 results.append({
                     "sr_no":     sr_no,
