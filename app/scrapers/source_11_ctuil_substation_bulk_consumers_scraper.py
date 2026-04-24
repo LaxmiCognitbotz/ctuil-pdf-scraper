@@ -126,19 +126,39 @@ async def async_download(session, url, dest):
             print(f"Error: {url} → {e}")
 
 
-# ===== Order =====
 def reorder_and_plan(dest_dir, urls):
     os.makedirs(dest_dir, exist_ok=True)
+
+    existing = {}
+    for f in os.listdir(dest_dir):
+        if "_" in f and f.split("_", 1)[0].isdigit():
+            original = f.split("_", 1)[1]
+            existing[original] = f
+
+    # Handle duplicates in new URLs to match existing
+    ordered_names = [safe_filename(u) for u in urls]
+    seen_counts = {}
+    for i, name in enumerate(ordered_names):
+        seen_counts[name] = seen_counts.get(name, 0) + 1
+        if seen_counts[name] > 1 and "." in name:
+            base, ext = name.rsplit(".", 1)
+            ordered_names[i] = f"{base}-{seen_counts[name]}.{ext}"
+        elif seen_counts[name] > 1:
+            ordered_names[i] = f"{name}-{seen_counts[name]}"
 
     tasks = []
     counter = 1
 
-    for url in urls:
-        name = safe_filename(url)
+    for url, name in zip(urls, ordered_names):
         new_name = f"{counter:02d}_{name}"
         new_path = os.path.join(dest_dir, new_name)
 
-        tasks.append((url, new_path))
+        if name in existing:
+            old_path = os.path.join(dest_dir, existing[name])
+            if old_path != new_path:
+                os.rename(old_path, new_path)
+        else:
+            tasks.append((url, new_path))
 
         counter += 1
 

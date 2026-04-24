@@ -305,19 +305,49 @@ def run(user_input: str, output_dir: Path):
 
             print(f"Downloading {len(to_download)} matched PDF(s) …\n")
 
-            for serial, pdf in enumerate(to_download, start=1):
+            save_dir.mkdir(parents=True, exist_ok=True)
+            existing = {}
+            for f in os.listdir(save_dir):
+                if "_" in f and f.split("_", 1)[0].isdigit():
+                    original = f.split("_", 1)[1]
+                    existing[original] = f
+
+            # Handle duplicates in new URLs to match existing
+            ordered_names = []
+            for pdf in to_download:
                 raw_fname = os.path.basename(urlparse(pdf["url"]).path)
                 if not raw_fname.lower().endswith(".pdf"):
                     raw_fname += ".pdf"
-                fname = f"{serial:02d}_{raw_fname}"
-                dest  = save_dir / fname
+                ordered_names.append(raw_fname)
+                
+            seen_counts = {}
+            for i, name in enumerate(ordered_names):
+                seen_counts[name] = seen_counts.get(name, 0) + 1
+                if seen_counts[name] > 1 and "." in name:
+                    base, ext = name.rsplit(".", 1)
+                    ordered_names[i] = f"{base}-{seen_counts[name]}.{ext}"
+                elif seen_counts[name] > 1:
+                    ordered_names[i] = f"{name}-{seen_counts[name]}"
+
+            for serial, (pdf, raw_fname) in enumerate(zip(to_download, ordered_names), start=1):
+                new_fname = f"{serial:02d}_{raw_fname}"
+                dest  = save_dir / new_fname
 
                 print(f"  [{serial:02d}]  {pdf['text']}")
                 print(f"        {pdf['url']}")
-                ok = download_pdf(pdf["url"], dest, session)
-                if ok:
-                    total_downloaded += 1
-                time.sleep(0.4)
+
+                if raw_fname in existing:
+                    old_path = save_dir / existing[raw_fname]
+                    if old_path != dest:
+                        os.rename(old_path, dest)
+                        print(f"         ✓  Renamed {existing[raw_fname]} -> {new_fname}")
+                    else:
+                        print(f"         ✓  Already exists (Skipped)")
+                else:
+                    ok = download_pdf(pdf["url"], dest, session)
+                    if ok:
+                        total_downloaded += 1
+                    time.sleep(0.4)
 
         browser.close()
 
