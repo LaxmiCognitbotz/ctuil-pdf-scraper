@@ -6,13 +6,14 @@ Downloads PDFs from "Agenda" and "Minutes" columns for each region.
 import os
 import re
 import asyncio
-
 import aiohttp
-from urllib.parse import urljoin, unquote
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin, unquote
+from collections import defaultdict
 
 # ==== Config ====
-BASE_URL = "https://ctuil.in/ists-consultation-meeting"
+BASE_URL   = "https://ctuil.in/ists-consultation-meeting"
+SITE_ROOT  = "https://ctuil.in"
 OUTPUT_DIR = "uploads/CTUIL-ISTS-CMETS"
 
 HEADERS = {
@@ -20,65 +21,81 @@ HEADERS = {
     "Referer": BASE_URL,
 }
 
-REGIONS = [
-    "Northern Region",
-    "Western Region",
-    "Southern Region",
-    "Eastern Region",
-    "North Eastern Region",
-]
+INDEX_FILE = "download_index.txt"
 
-TAB_MAP = {
-    "Northern Region": "1",
-    "Western Region": "2",
-    "Southern Region": "3",
-    "Eastern Region": "4",
-    "North Eastern Region": "5",
+REGION_MAP = {
+    "northern region":      "Northern Region",
+    "western region":       "Western Region",
+    "southern region":      "Southern Region",
+    "eastern region":       "Eastern Region",
+    "north eastern region": "North Eastern Region",
+    "north-eastern region": "North Eastern Region",
 }
 
-PAGE_SEM = asyncio.Semaphore(10)
+PAGE_SEM     = asyncio.Semaphore(10)
 DOWNLOAD_SEM = asyncio.Semaphore(20)
 
 
-# ==== Utils ====
+# ==== Helpers ====
 def safe_filename(url: str) -> str:
     name = unquote(url.split("/")[-1].split("?")[0])
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
     return name.strip("._") or "file.pdf"
 
+
+def ensure_dir(*parts) -> str:
+    path = os.path.join(*parts)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+# ==== Robust Rename Logic ====
 def extract_meeting_label(stem: str, doc_type: str) -> str:
-    stem = re.sub(r"^\d+[_\-\s]*", "", stem).strip()
+    stem = re.sub(r"\d{10,}", "", stem)  # remove timestamps
+    stem = re.sub(r"^\d+[_\-\s]*", "", stem)
+
     stem = stem.replace("_", " ")
     stem = re.sub(r"\s+", " ", stem).strip()
 
-    if doc_type == "Agenda":
-        stem = re.sub(r"(?i)^meeting\s+notice\s*&\s*agenda\s*(for)?\s*", "", stem).strip()
-        stem = re.sub(r"(?i)^notice\s*&\s*agenda\s*(for)?\s*", "", stem).strip()
-        stem = re.sub(r"(?i)^agenda\s*(for)?\s*", "", stem).strip()
-    else:
-        stem = re.sub(r"(?i)^minutes\s*(of)?\s*", "", stem).strip()
-        stem = re.sub(r"(?i)^mom\s*(of)?\s*", "", stem).strip()
+    lower = stem.lower()
 
-    meeting_match = re.search(
-        r"(\d{1,3}(?:st|nd|rd|th)\s+CMETS-[A-Za-z]+)",
+    # Special classifications
+    special = ""
+    if re.search(r"additional\s*agenda[-\s]*\d*", lower):
+        special = "Additional Agenda"
+    elif "revised agenda" in lower:
+        special = "Revised Agenda"
+    elif "corrigendum" in lower:
+        special = "Minutes Corrigendum"
+    elif "addendum" in lower:
+        special = "Addendum of Minutes"
+    elif "annex" in lower or "exhibit" in lower:
+        special = "Annex"
+
+    # Strong meeting extraction
+    match = re.search(
+        r"(\d{1,3})(st|nd|rd|th)?\s*CMETS[-\s]*([A-Z]{2,3})",
         stem,
         re.IGNORECASE,
     )
-    if meeting_match:
-        meeting_label = meeting_match.group(1)
+
+    if match:
+        num = match.group(1)
+        suffix = match.group(2) or "th"
+        region = match.group(3).upper()
+        meeting = f"{num}{suffix} CMETS-{region}"
     else:
-        special_match = re.search(
-            r"(Special\s+CMETS-[A-Za-z]+)",
-            stem,
-            re.IGNORECASE,
-        )
-        if special_match:
-            meeting_label = special_match.group(1)
+        fallback = re.search(r"(\d{1,3})\s*CMETS", stem, re.IGNORECASE)
+        if fallback:
+            meeting = f"{fallback.group(1)}th CMETS"
         else:
-            meeting_label = stem
+            meeting = stem
 
-    return re.sub(r"\s+", " ", meeting_label).strip()
+    meeting = re.sub(r"\s+", " ", meeting).strip()
 
+    if special:
+        return f"{special}_{meeting}"
+
+    return meeting
 
 def formatted_filename(doc_type: str, url: str) -> str:
     original = safe_filename(url)
@@ -89,206 +106,205 @@ def formatted_filename(doc_type: str, url: str) -> str:
     else:
         stem, ext = original, ".pdf"
 
-    meeting_label = extract_meeting_label(stem, doc_type)
+    label = extract_meeting_label(stem, doc_type)
+    return f"{doc_type}_{label}{ext}"
 
-    return f"{doc_type}_{meeting_label}{ext}"
 
+# ==== Index Logic ====
+def load_index():
+    if not os.path.exists(INDEX_FILE):
+        return set()
+    with open(INDEX_FILE, "r", encoding="utf-8") as f:
+        return set(line.strip() for line in f)
 
-def ensure_region_dir(region: str) -> str:
-    new_dir = os.path.join(OUTPUT_DIR, region)
-    legacy_dir = os.path.join(OUTPUT_DIR, region.replace(" ", "_"))
+def save_index(index):
+    with open(INDEX_FILE, "w", encoding="utf-8") as f:
+        for url in sorted(index):
+            f.write(url + "\n")
 
-    if os.path.isdir(legacy_dir) and legacy_dir != new_dir:
-        os.makedirs(new_dir, exist_ok=True)
-        for name in os.listdir(legacy_dir):
-            src = os.path.join(legacy_dir, name)
-            dst = os.path.join(new_dir, name)
-            if not os.path.exists(dst):
-                os.rename(src, dst)
-        try:
-            os.rmdir(legacy_dir)
-        except OSError:
-            pass
-
-    return new_dir
-
-# ==== Fetch HTML ====
-async def async_fetch(session, url):
+# ==== Network ====
+async def fetch_html(session, url):
     async with PAGE_SEM:
-        async with session.get(url) as resp:
-            return await resp.text()
+        for attempt in range(3):
+            try:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as r:
+                    r.raise_for_status()
+                    return await r.text()
+            except Exception:
+                await asyncio.sleep(2 ** attempt)
+    return ""
 
-# ==== Download File ====
-async def async_download(session, url, dest):
+async def download(session, url, dest, index):
     async with DOWNLOAD_SEM:
-        try:
-            async with session.get(url) as resp:
-                if resp.status != 200:
-                    return
-                data = await resp.read()
 
-            os.makedirs(os.path.dirname(dest), exist_ok=True)
+        if url in index:
+            return
 
-            with open(dest, "wb") as f:
-                f.write(data)
+        for attempt in range(3):
+            try:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=90)) as r:
+                    if r.status != 200:
+                        return
+                    data = await r.read()
 
-            print(f"[OK] {dest}")
+                ensure_dir(os.path.dirname(dest))
+                with open(dest, "wb") as f:
+                    f.write(data)
 
-        except Exception as e:
-            print("Download error:", e)
+                index.add(url)
+                return  # no print (faster)
 
-# ==== Extract Links ====
-def extract_links(html: str, region_filter: str = None) -> dict:
+            except Exception:
+                await asyncio.sleep(2 ** attempt)
+
+# ==== Parsing ====
+def get_total_pages(html):
+    m = re.search(r"Displaying\s+\d+\s+to\s+\d+\s+of\s+(\d+)", html, re.I)
+    if m:
+        n = int(m.group(1))
+        return max(1, (n + 9) // 10)
+    return 30
+
+def parse_rows(html):
     soup = BeautifulSoup(html, "html.parser")
     table = soup.find("table")
     if not table:
-        return {}
+        return []
 
-    header_row = table.find("tr")
     headers = [th.get_text(strip=True).lower()
-               for th in header_row.find_all(["th", "td"])]
+               for th in table.find("tr").find_all(["th", "td"])]
 
-    col_map = {}
-    for i, h in enumerate(headers):
-        if h == "agenda":
-            col_map["Agenda"] = i
-        elif h in ("minutes", "mom"):
-            col_map["Minutes"] = i
+    region_col  = next((i for i, h in enumerate(headers) if h == "region"),  3)
+    notice_col  = next((i for i, h in enumerate(headers) if "notice" in h),  4)
+    agenda_col  = next((i for i, h in enumerate(headers) if "agenda" in h),  5)
+    minutes_col = next((i for i, h in enumerate(headers) if h in ("minutes", "mom")), 6)
 
-    col_map.setdefault("Agenda", 5)
-    col_map.setdefault("Minutes", 6)
-
-    region_map = {
-        "Northern Region": "nr",
-        "Western Region": "wr",
-        "Southern Region": "sr",
-        "Eastern Region": "er",
-        "North Eastern Region": "ner",
-    }
-
-    target = region_map.get(region_filter, "").lower()
-
-    results = {"Agenda": [], "Minutes": []}
-    body_rows = table.find_all("tr")[1:]
-
-    for row in body_rows:
-        cells = row.find_all("td")
-
-        for doc_type in ("Agenda", "Minutes"):
-            col_idx = col_map.get(doc_type)
-            if col_idx is None or col_idx >= len(cells):
+    def links_from_cell(cells, col, dtype):
+        if col >= len(cells):
+            return []
+        out = []
+        for a in cells[col].find_all("a", href=True):
+            href = a["href"].strip()
+            if "/uploads/ists_consultation_meeting/" not in href.lower():
                 continue
+            full = href if href.startswith("http") else urljoin(SITE_ROOT, href)
+            out.append({"region": None, "doc_type": dtype, "url": full})
+        return out
 
-            for a in cells[col_idx].find_all("a", href=True):
-                href = a["href"].strip()
-                if not href or href.startswith("#") or "javascript" in href:
-                    continue
+    records = []
+    for tr in table.find_all("tr")[1:]:
+        cells = tr.find_all("td")
+        if not cells:
+            continue
 
-                full_url = href if href.startswith("http") else urljoin(BASE_URL, href)
+        raw_region = cells[region_col].get_text(strip=True).lower() if region_col < len(cells) else ""
+        region = REGION_MAP.get(raw_region)
+        if not region:
+            continue
 
-                fname = full_url.lower()
+        for entry in (
+            links_from_cell(cells, notice_col,  "Notice") +
+            links_from_cell(cells, agenda_col,  "Agenda") +
+            links_from_cell(cells, minutes_col, "Minutes")
+        ):
+            entry["region"] = region
+            records.append(entry)
 
-                if target and f"cmets-{target}" not in fname:
-                    continue
+    return records
 
-                results[doc_type].append(full_url)
-    return results
+# ==== Collect ====
+async def collect_all(session):
+    first_html = await fetch_html(session, f"{BASE_URL}?p=ajax&page=1&tab=0")
+    if not first_html:
+        return []
 
-# ==== Get total pages ====
-def get_total_pages(html: str) -> int:
-    m = re.search(r"Displaying\s+\d+\s+to\s+\d+\s+of\s+(\d+)", html, re.I)
-    if m:
-        total = int(m.group(1))
-        return (total + 9) // 10
-    return 1
-
-# ==== Reorder Files (Shift Logic) ====
-def reorder_files(dest_dir, urls, doc_type):
-    os.makedirs(dest_dir, exist_ok=True)
-
-    # ==== Map existing files ====
-    existing_map = {}
-    for f in os.listdir(dest_dir):
-        lookup_name = f.split("_", 1)[1] if "_" in f and f.split("_", 1)[0].isdigit() else f
-        existing_map[lookup_name] = f
-
-        if "." in lookup_name:
-            lookup_stem, lookup_ext = lookup_name.rsplit(".", 1)
-            lookup_ext = "." + lookup_ext.lower()
-        else:
-            lookup_stem, lookup_ext = lookup_name, ".pdf"
-
-        normalized_name = f"{doc_type}_{extract_meeting_label(lookup_stem, doc_type)}{lookup_ext}"
-        existing_map.setdefault(normalized_name, f)
-
-    counter = 1
-
-    for url in urls:
-        original_name = formatted_filename(doc_type, url)
-        new_name = f"{counter:02d}_{original_name}"
-        new_path = os.path.join(dest_dir, new_name)
-
-        if original_name in existing_map:
-            old_path = os.path.join(dest_dir, existing_map[original_name])
-
-            # ==== Rename existing file ====
-            if old_path != new_path:
-                os.rename(old_path, new_path)
-        else:
-            # ==== New file → Download ====
-            yield (url, new_path)
-
-        counter += 1
-
-# ==== Scrape regions ====
-async def scrape_region(session, region, tab_key):
-    print(f"\n=== {region} ===")
-
-    region_dir = ensure_region_dir(region)
-
-    first_url = f"{BASE_URL}?p=ajax&page=1&tab={tab_key}"
-    first_html = await async_fetch(session, first_url)
     total_pages = get_total_pages(first_html)
+    print(f"Pages: {total_pages}")
 
-    # ==== Fetch all pages ====
-    pages_html = []
-    for page_num in range(1, total_pages + 1):
-        url = f"{BASE_URL}?p=ajax&page={page_num}&tab={tab_key}"
-        html = await async_fetch(session, url)
-        pages_html.append(html)
+    urls = [f"{BASE_URL}?p=ajax&page={p}&tab=0" for p in range(2, total_pages + 1)]
+    htmls = await asyncio.gather(*[fetch_html(session, u) for u in urls])
 
-    # ==== Collect Links ====
-    collected = {"Agenda": [], "Minutes": []}
+    seen = set()
+    all_records = []
 
-    for html in pages_html:
-        links = extract_links(html, region_filter=region)
-        for doc_type in collected:
-            collected[doc_type].extend(links.get(doc_type, []))
+    for html in [first_html, *htmls]:
+        for rec in parse_rows(html):
+            if rec["url"] not in seen:
+                seen.add(rec["url"])
+                all_records.append(rec)
 
-    # ==== Reorder + Download ====
-    download_tasks = []
+    return all_records
 
-    for doc_type in ("Agenda", "Minutes"):
-        urls = collected[doc_type]
-        dest_dir = os.path.join(region_dir, doc_type)
+# ==== Dynamic Count Logic ====
+def compute_counts(records):
+    counts = defaultdict(lambda: defaultdict(int))
 
-        for url, dest in reorder_files(dest_dir, urls, doc_type):
-            download_tasks.append(
-                async_download(session, url, dest)
-            )
-    await asyncio.gather(*download_tasks)
+    for r in records:
+        if r["doc_type"] in ("Agenda", "Minutes"):
+            counts[r["region"]][r["doc_type"]] += 1
 
+    return counts
+
+def print_summary(counts):
+    print("\nScraper:", BASE_URL)
+    print("Target : PDFs (Agenda + Minutes only) split into 5 region folders.\n")
+
+    total_all = 0
+
+    for region in sorted(counts):
+        a = counts[region].get("Agenda", 0)
+        m = counts[region].get("Minutes", 0)
+        t = a + m
+        total_all += t
+
+        print(f"  {region:<23} : Agenda={a:<3} Minutes={m:<3} → {t}")
+
+    print(f"  TOTAL{'':<30} → {total_all}\n")
 
 # ==== Main ====
 async def main():
     async with aiohttp.ClientSession(headers=HEADERS) as session:
 
-        tasks = [
-            scrape_region(session, region, TAB_MAP[region])
-            for region in REGIONS
+        index = load_index()
+
+        print("Collecting...\n")
+        all_records = await collect_all(session)
+
+        filtered = [
+            r for r in all_records
+            if r["region"] and r["doc_type"] in ("Agenda", "Minutes")
         ]
 
-        await asyncio.gather(*tasks)
+        # Dynamic counts
+        counts = compute_counts(filtered)
+        print_summary(counts)
+
+        grouped = defaultdict(list)
+        for rec in filtered:
+            grouped[(rec["region"], rec["doc_type"])].append(rec)
+
+        tasks = []
+
+        for (region, dtype), records in grouped.items():
+            dest_dir = ensure_dir(OUTPUT_DIR, region, dtype)
+
+            for idx, rec in enumerate(records, start=1):
+                clean_name = formatted_filename(dtype, rec["url"])
+                numbered = f"{idx:02d}_{clean_name}"
+                dest = os.path.join(dest_dir, numbered)
+
+                tasks.append(download(session, rec["url"], dest, index))
+
+        print(f"Total files to download: {len(tasks)}\n")
+
+        CHUNK = 15
+        for i in range(0, len(tasks), CHUNK):
+            await asyncio.gather(*tasks[i:i+CHUNK])
+            await asyncio.sleep(0.5)
+
+        save_index(index)
+
+    print("\nDone.")
 
 
 if __name__ == "__main__":
