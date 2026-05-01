@@ -4,9 +4,9 @@ A REST API built with **FastAPI** that automates PDF extraction and download fro
 
 ## Overview
 
-This project consolidates **13 independent scrapers** into a single API platform. Scrapers target three primary data sources:
+This project consolidates **14 independent scrapers** into a single API platform. Scrapers target three primary data sources:
 
-- **CTUIL** (ctuil.in) — Consultation meetings, coordination meetings, RE generators, reallocation meetings, bidding calendars, compliance reports, revocations, renewable energy margins, and bulk consumer data.
+- **CTUIL** (ctuil.in) — Consultation meetings, coordination meetings, RE generators, reallocation meetings, bidding calendars, compliance reports, revocations, renewable energy margins, bulk consumer data, and GNA Connectivity Fresh grants.
 - **CEA** (cea.nic.in) — Transmission reports (RTM/TBCB), 500 GW RE integration documents, and NCT meeting minutes.
 - **PFCCLINDIA** (pfcclindia.com) — Tender documents filtered by keyword (Corrigendum, RFP, Extension, etc.) with user-supplied query.
 
@@ -14,7 +14,7 @@ All downloaded PDFs are organized into the `uploads/` directory with incremental
 
 ## Key Features
 
-- **13 scraper endpoints** covering CTUIL, CEA, and PFCCLINDIA data sources
+- **14 scraper endpoints** covering CTUIL, CEA, and PFCCLINDIA data sources
 - **Strict wrapper architecture** — scraper scripts are imported and called as black boxes, never modified
 - **Consistent API responses** — every endpoint returns a standardized `APIResponse` envelope with status, message, data, error, and UTC timestamp
 - **Proper HTTP status codes** — 200 on success, 500 on failure with full traceback
@@ -70,6 +70,7 @@ The API starts at `http://localhost:8000`. Visit `http://localhost:8000/docs` fo
 | `POST` | `/api/v1/scrape/monitoring-connectivity`         | Revocation & Monitoring PDFs          |
 | `POST` | `/api/v1/scrape/renewable-energy`                | RE margin & Bays Allocation PDFs      |
 | `POST` | `/api/v1/scrape/substation-bulk-consumers`       | Bulk Consumer PDFs                    |
+| `POST` | `/api/v1/scrape/gna-connectivity-fresh`          | Connectivity Fresh PDFs (latest 6 mo) |
 
 ### CEA Scrapers
 
@@ -106,8 +107,8 @@ ctuil-pdf-scraper/
 │   │
 │   ├── modules/
 │   │   ├── ctuil/
-│   │   │   ├── routes.py      # 9 CTUIL POST endpoints
-│   │   │   └── services.py    # 9 CTUIL service methods
+│   │   │   ├── routes.py      # 10 CTUIL POST endpoints
+│   │   │   └── services.py    # 10 CTUIL service methods
 │   │   │
 │   │   ├── cea/
 │   │   │   ├── routes.py      # 3 CEA POST endpoints
@@ -131,7 +132,8 @@ ctuil-pdf-scraper/
 │       ├── source_10a_cea_potential_rezones_scraper.py
 │       ├── source_10b_cea_nct_meetings_scraper.py
 │       ├── source_10c_pfcclindia_tender_scraper.py
-│       └── source_11_ctuil_substation_bulk_consumers_scraper.py
+│       ├── source_11_ctuil_substation_bulk_consumers_scraper.py
+│       └── source_12_ctuil_gna_connectivity_fresh_scraper.py
 │
 └── uploads/                   # All downloaded PDFs (auto-created)
     ├── CTUIL-ISTS-CMETS/
@@ -146,6 +148,7 @@ ctuil-pdf-scraper/
     ├── CTUIL-Transmission-Reports/
     ├── CEA-500GW/
     ├── CEA-NCT-Minutes/
+    ├── CTUIL-GNA-Connectivity-Fresh/
     └── PFCCL-INDIA-TENDER/         
 ```
 
