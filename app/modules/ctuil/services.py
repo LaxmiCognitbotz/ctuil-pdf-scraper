@@ -177,3 +177,22 @@ class CtuILScraperService:
             label="Substation Bulk Consumers",
             output_dir="uploads/CTUIL-Bulk-Consumers",
         )
+
+    @staticmethod
+    def run_gna_connectivity_fresh() -> dict:
+        """
+        Source 12 — GNA Connectivity Fresh Scraper
+        ───────────────────────────────────────────
+        Downloads **Connectivity Fresh** PDFs for the latest 6 months
+        from the GNA 2022 updates page.
+
+        Target : https://www.ctuil.in/gna2022updates
+        Output : uploads/CTUIL-GNA-Connectivity-Fresh/
+        """
+        from app.scrapers import source_12_ctuil_gna_connectivity_fresh_scraper as script
+
+        return execute_scraper(
+            script,
+            label="GNA Connectivity Fresh",
+            output_dir="uploads/CTUIL-GNA-Connectivity-Fresh",
+        )

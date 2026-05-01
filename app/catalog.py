@@ -97,4 +97,11 @@ SCRAPER_CATALOG = [
         "output_dir": "uploads/PFCCL-INDIA-TENDER",
         "input_required": {"query": "Substring of the tender title to search for"},
     },
+    {
+        "endpoint": "/api/v1/scrape/gna-connectivity-fresh",
+        "label": "GNA Connectivity Fresh",
+        "source": "CTUIL",
+        "page_url": "https://www.ctuil.in/gna2022updates",
+        "output_dir": "uploads/CTUIL-GNA-Connectivity-Fresh",
+    },
 ]

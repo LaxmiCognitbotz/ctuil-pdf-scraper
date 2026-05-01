@@ -174,3 +174,22 @@ def scrape_substation_bulk_consumers():
         error_message="Substation Bulk Consumers scraper failed.",
         error_code="SUBSTATION_BULK_CONSUMERS_ERROR",
     )
+
+
+@router.post(
+    "/scrape/gna-connectivity-fresh",
+    response_model=APIResponse,
+    summary="Scrape GNA Connectivity Fresh PDFs",
+    description=(
+        "Downloads **Connectivity Fresh** PDFs for the latest 6 months "
+        "from the CTUIL GNA 2022 updates page."
+    ),
+    responses=ERROR_RESPONSES,
+)
+def scrape_gna_connectivity_fresh():
+    return handle_scraper(
+        service_fn=CtuILScraperService.run_gna_connectivity_fresh,
+        success_message="GNA Connectivity Fresh scraper completed successfully.",
+        error_message="GNA Connectivity Fresh scraper failed.",
+        error_code="GNA_CONNECTIVITY_FRESH_ERROR",
+    )
