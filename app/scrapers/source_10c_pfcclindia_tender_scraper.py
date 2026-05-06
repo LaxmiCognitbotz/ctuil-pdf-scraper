@@ -339,7 +339,7 @@ def run(user_input: str, output_dir: Path):
                 if raw_fname in existing:
                     old_path = save_dir / existing[raw_fname]
                     if old_path != dest:
-                        os.rename(old_path, dest)
+                        os.replace(old_path, dest)
                         print(f"         ✓  Renamed {existing[raw_fname]} -> {new_fname}")
                     else:
                         print(f"         ✓  Already exists (Skipped)")

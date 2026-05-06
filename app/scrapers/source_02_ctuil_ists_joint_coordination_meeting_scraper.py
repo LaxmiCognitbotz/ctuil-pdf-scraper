@@ -142,7 +142,7 @@ def ensure_region_dir(region: str) -> str:
             src = os.path.join(legacy_dir, name)
             dst = os.path.join(new_dir, name)
             if not os.path.exists(dst):
-                os.rename(src, dst)
+                os.replace(src, dst)
         try:
             os.rmdir(legacy_dir)
         except OSError:
@@ -287,7 +287,7 @@ def reorder_files(dest_dir, urls, doc_type):
         if original_name in existing_map:
             old_path = os.path.join(dest_dir, existing_map[original_name])
             if old_path != new_path:
-                os.rename(old_path, new_path)
+                os.replace(old_path, new_path)
         else:
             yield (url, new_path)
 

@@ -135,7 +135,7 @@ def reorder_and_plan(dest_dir, urls):
             old_path = os.path.join(dest_dir, existing[name])
 
             if old_path != new_path:
-                os.rename(old_path, new_path)
+                os.replace(old_path, new_path)
         else:
             tasks.append((url, new_path))
 

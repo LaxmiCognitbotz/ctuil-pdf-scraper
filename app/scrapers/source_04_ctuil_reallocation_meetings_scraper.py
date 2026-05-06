@@ -50,7 +50,7 @@ def ensure_doc_type_dir(region: str, doc_type: str) -> str:
             src = os.path.join(legacy_dir, name)
             dst = os.path.join(new_dir, name)
             if not os.path.exists(dst):
-                os.rename(src, dst)
+                os.replace(src, dst)
         try:
             os.rmdir(legacy_dir)
         except OSError:
@@ -91,7 +91,7 @@ def apply_incremental_update(dest_dir, urls):
         if original_name in existing:
             old_path = os.path.join(dest_dir, existing[original_name])
             if old_path != new_path:
-                os.rename(old_path, new_path)
+                os.replace(old_path, new_path)
         else:
             # Find the matching URL for this display name (including any "-2" suffix).
             download_list.append((urls[idx - 1], new_path))

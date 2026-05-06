@@ -137,8 +137,8 @@ def reorder_and_plan(dest_dir: str, entries: list[dict]) -> list[tuple[str, str]
             if old_name != new_name:
                 # Use temp name to avoid collision during shift
                 tmp_path = new_path + ".tmp"
-                os.rename(old_path, tmp_path)
-                os.rename(tmp_path, new_path)
+                os.replace(old_path, tmp_path)
+                os.replace(tmp_path, new_path)
                 print(f"[SHIFT] {old_name} -> {new_name}")
         else:
             # New month — queue for download

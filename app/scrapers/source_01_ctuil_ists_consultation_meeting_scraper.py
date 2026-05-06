@@ -21,7 +21,6 @@ HEADERS = {
     "Referer": BASE_URL,
 }
 
-INDEX_FILE = "download_index.txt"
 
 REGION_MAP = {
     "northern region":      "Northern Region",
@@ -110,17 +109,6 @@ def formatted_filename(doc_type: str, url: str) -> str:
     return f"{doc_type}_{label}{ext}"
 
 
-# ==== Index Logic ====
-def load_index():
-    if not os.path.exists(INDEX_FILE):
-        return set()
-    with open(INDEX_FILE, "r", encoding="utf-8") as f:
-        return set(line.strip() for line in f)
-
-def save_index(index):
-    with open(INDEX_FILE, "w", encoding="utf-8") as f:
-        for url in sorted(index):
-            f.write(url + "\n")
 
 # ==== Network ====
 async def fetch_html(session, url):
@@ -134,10 +122,10 @@ async def fetch_html(session, url):
                 await asyncio.sleep(2 ** attempt)
     return ""
 
-async def download(session, url, dest, index):
+async def download(session, url, dest):
     async with DOWNLOAD_SEM:
 
-        if url in index:
+        if os.path.exists(dest):
             return
 
         for attempt in range(3):
@@ -151,7 +139,6 @@ async def download(session, url, dest, index):
                 with open(dest, "wb") as f:
                     f.write(data)
 
-                index.add(url)
                 return  # no print (faster)
 
             except Exception:
@@ -265,8 +252,6 @@ def print_summary(counts):
 async def main():
     async with aiohttp.ClientSession(headers=HEADERS) as session:
 
-        index = load_index()
-
         print("Collecting...\n")
         all_records = await collect_all(session)
 
@@ -288,12 +273,24 @@ async def main():
         for (region, dtype), records in grouped.items():
             dest_dir = ensure_dir(OUTPUT_DIR, region, dtype)
 
+            existing = {}
+            for f in os.listdir(dest_dir):
+                if "_" in f and f[0].isdigit():
+                    # Extract the part after the first underscore (e.g. "01_Agenda..." -> "Agenda...")
+                    original = f.split("_", 1)[1]
+                    existing[original] = f
+
             for idx, rec in enumerate(records, start=1):
                 clean_name = formatted_filename(dtype, rec["url"])
                 numbered = f"{idx:02d}_{clean_name}"
-                dest = os.path.join(dest_dir, numbered)
+                new_path = os.path.join(dest_dir, numbered)
 
-                tasks.append(download(session, rec["url"], dest, index))
+                if clean_name in existing:
+                    old_path = os.path.join(dest_dir, existing[clean_name])
+                    if old_path != new_path:
+                        os.replace(old_path, new_path)
+                else:
+                    tasks.append(download(session, rec["url"], new_path))
 
         print(f"Total files to download: {len(tasks)}\n")
 
@@ -301,9 +298,6 @@ async def main():
         for i in range(0, len(tasks), CHUNK):
             await asyncio.gather(*tasks[i:i+CHUNK])
             await asyncio.sleep(0.5)
-
-        save_index(index)
-
     print("\nDone.")
 
 

@@ -155,7 +155,7 @@ def reorder_and_plan(dest_dir: str, urls: list[str]) -> list[tuple[str, str]]:
         if name in existing:
             old_path = os.path.join(dest_dir, existing[name])
             if old_path != new_path and os.path.exists(old_path):
-                os.rename(old_path, new_path)
+                os.replace(old_path, new_path)
         else:
             tasks.append((url, new_path))
 

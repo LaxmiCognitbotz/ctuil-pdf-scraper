@@ -163,7 +163,7 @@ def reorder_and_plan(dest_dir: str, ordered_links: list) -> list:
             old_path  = os.path.join(dest_dir, old_fname)
             if old_fname != new_fname:
                 print(f"[RENAME] {old_fname}  →  {new_fname}")
-                os.rename(old_path, new_path)
+                os.replace(old_path, new_path)
             else:
                 print(f"[OK]     {new_fname}")
         else:

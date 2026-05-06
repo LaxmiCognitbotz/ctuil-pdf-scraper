@@ -116,7 +116,7 @@ def reorder_and_plan(dest_dir, urls):
 
             # ==== Rename (Shift Logic) ====
             if old_path != new_path:
-                os.rename(old_path, new_path)
+                os.replace(old_path, new_path)
         else:
             # ==== New File ====
             tasks.append((url, new_path))

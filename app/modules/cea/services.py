@@ -21,14 +21,14 @@ class CEAScraperService:
         24 months using CEA's AJAX endpoint.
 
         Target : https://cea.nic.in/transmission-reports/?lang=en
-        Output : uploads/CTUIL-Transmission-Reports/{year}/{month}/
+        Output : uploads/CEA-Transmission-Reports/{year}/{month}/
         """
         from app.scrapers import source_06_ctuil_transmission_reports_scraper as script
 
         return execute_scraper(
             script,
             label="CEA Transmission Reports",
-            output_dir="uploads/CTUIL-Transmission-Reports",
+            output_dir="uploads/CEA-Transmission-Reports",
         )
 
     @staticmethod

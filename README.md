@@ -145,7 +145,7 @@ ctuil-pdf-scraper/
     ├── CTUIL-Revocations-PDFs/
     ├── CTUIL-Renewable-Energy/
     ├── CTUIL-Bulk-Consumers/
-    ├── CTUIL-Transmission-Reports/
+    ├── CEA-Transmission-Reports/
     ├── CEA-500GW/
     ├── CEA-NCT-Minutes/
     ├── CTUIL-GNA-Connectivity-Fresh/
