@@ -1,5 +1,8 @@
 """
+Scraper for: https://www.pfcclindia.com/tender.php?AM2
 PFCCL India Tender Scraper
+
+Output Directory: uploads/PFCCL-INDIA-TENDER
 """
 
 from __future__ import annotations
@@ -13,15 +16,11 @@ import unicodedata
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
-try:
-    from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
-except ImportError:
-    sys.exit("Run: pip install playwright && python -m playwright install chromium")
+import requests
+from dotenv import load_dotenv
+from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
-try:
-    import requests
-except ImportError:
-    sys.exit("Run: pip install requests")
+load_dotenv(verbose=True)
 
 BASE_URL   = "https://www.pfcclindia.com"
 TENDER_URL = "https://www.pfcclindia.com/tender.php?AM2"
@@ -29,6 +28,42 @@ UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
+
+# ==== Proxy Settings ====
+PROXY_ENABLED      = os.getenv("PROXY_ENABLED", "false").lower() == "true"
+PROXY_URL          = os.getenv("PROXY_URL", "")
+PROXY_INSECURE_SSL = os.getenv("PROXY_INSECURE_SSL", "false").lower() == "true"
+
+PLAYWRIGHT_RETRIES = 3
+
+CHROMIUM_ARGS = [
+    "--disable-gpu",
+    "--disable-software-rasterizer",
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--disable-default-apps",
+    "--disable-sync",
+    "--disable-translate",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--mute-audio",
+    "--ignore-certificate-errors",
+    "--ignore-ssl-errors",
+    "--disable-dev-tools",
+    "--disable-hang-monitor",
+    "--disable-prompt-on-repost",
+    "--disable-client-side-phishing-detection",
+    "--password-store=basic",
+]
+
+
+# ==== Proxy Helpers ====
+def get_proxy() -> str | None:
+    return PROXY_URL if PROXY_ENABLED else None
+
+def get_ssl_verify():
+    return not PROXY_INSECURE_SSL
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # KEYWORDS — matched against child link TEXT only (not URL)
@@ -183,16 +218,26 @@ def paginate_all(page):
             break
 
 
-def goto_retry(page, url: str, retries: int = 3, wait_ms: int = 4000):
+def goto_retry(page, url: str, retries: int = PLAYWRIGHT_RETRIES, wait_ms: int = 4000):
     for attempt in range(1, retries + 1):
         try:
-            page.goto(url, wait_until="networkidle", timeout=35_000)
+            page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=15_000)
+            except PWTimeout:
+                pass
             page.wait_for_timeout(wait_ms)
             return
         except PWTimeout:
             print(f"  [warn] timeout {attempt}/{retries}")
             if attempt == retries:
                 raise
+            time.sleep(attempt * 5)
+        except Exception as e:
+            print(f"  [warn] error {attempt}/{retries}: {e}")
+            if attempt == retries:
+                raise
+            time.sleep(5)
 
 
 # Download
@@ -259,6 +304,16 @@ def run(user_input: str, output_dir: Path):
     print(f"\nInput > {user_input}\n")
 
     session = requests.Session()
+
+    proxy = get_proxy()
+    if proxy:
+        session.proxies.update({
+            "http": proxy,
+            "https": proxy,
+        })
+
+    session.verify = get_ssl_verify()
+
     session.headers.update({
         "User-Agent": UA,
         "Referer":    BASE_URL + "/",
@@ -266,11 +321,16 @@ def run(user_input: str, output_dir: Path):
     })
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
+        browser = pw.chromium.launch(
+            headless=True,
+            args=CHROMIUM_ARGS,
+        )
         ctx = browser.new_context(
             user_agent=UA,
             viewport={"width": 1280, "height": 900},
+            ignore_https_errors=True,
             extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+            proxy={"server": PROXY_URL} if PROXY_ENABLED and PROXY_URL else None,
         )
         page = ctx.new_page()
 
@@ -319,7 +379,7 @@ def run(user_input: str, output_dir: Path):
                 if not raw_fname.lower().endswith(".pdf"):
                     raw_fname += ".pdf"
                 ordered_names.append(raw_fname)
-                
+
             seen_counts = {}
             for i, name in enumerate(ordered_names):
                 seen_counts[name] = seen_counts.get(name, 0) + 1

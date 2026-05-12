@@ -1,18 +1,69 @@
 """
 Scraper for: https://cea.nic.in/psp___a_i/transmission-system-for-integration-of-over-500-gw-non-fossil-capacity-by-2030/?lang=en
 Download pdfs from the page.
+
+Output Directory: uploads/CEA-500GW
 """
+
 import os
 import re
+import ssl
 import asyncio
-import aiohttp
 from urllib.parse import unquote
-from playwright.async_api import async_playwright
+
+import aiohttp
+from playwright.async_api import async_playwright, TimeoutError as PWTimeoutError
+from dotenv import load_dotenv
+
+load_dotenv(verbose=True)
 
 BASE_URL = "https://cea.nic.in/psp___a_i/transmission-system-for-integration-of-over-500-gw-non-fossil-capacity-by-2030/?lang=en"
 BASE_DIR = "uploads/CEA-500GW"
 
 DOWNLOAD_SEM = asyncio.Semaphore(10)
+
+# ==== Proxy Settings ====
+PROXY_ENABLED      = os.getenv("PROXY_ENABLED", "false").lower() == "true"
+PROXY_URL          = os.getenv("PROXY_URL", "")
+PROXY_INSECURE_SSL = os.getenv("PROXY_INSECURE_SSL", "false").lower() == "true"
+
+PLAYWRIGHT_RETRIES = 3
+
+CHROMIUM_ARGS = [
+    "--disable-gpu",
+    "--disable-software-rasterizer",
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--disable-default-apps",
+    "--disable-sync",
+    "--disable-translate",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--mute-audio",
+    "--ignore-certificate-errors",
+    "--ignore-ssl-errors",
+    "--disable-dev-tools",
+    "--disable-hang-monitor",
+    "--disable-prompt-on-repost",
+    "--disable-client-side-phishing-detection",
+    "--password-store=basic",
+]
+
+
+# ==== Proxy Helpers ====
+def get_proxy() -> str | None:
+    return PROXY_URL if PROXY_ENABLED else None
+
+def get_ssl_context():
+    if PROXY_INSECURE_SSL:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    return None
+
+def make_connector() -> aiohttp.TCPConnector:
+    return aiohttp.TCPConnector(ssl=get_ssl_context())
 
 
 # ===== Safe Filename =====
@@ -24,43 +75,77 @@ def safe_filename(url: str) -> str:
 
 # ===== Extract Links =====
 async def extract_links():
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+    last_error = None
 
-        await page.goto(BASE_URL)
-        await page.wait_for_selector("a")
+    for attempt in range(1, PLAYWRIGHT_RETRIES + 1):
+        print(f"Launching headless browser...")
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=CHROMIUM_ARGS,
+                )
+                context = await browser.new_context(
+                    ignore_https_errors=True,
+                    proxy={"server": PROXY_URL} if PROXY_ENABLED and PROXY_URL else None,
+                )
+                page = await context.new_page()
 
-        links = await page.evaluate("""() => {
-            const results = [];
-            const anchors = document.querySelectorAll("a");
+                await page.goto(BASE_URL, wait_until="domcontentloaded", timeout=60_000)
 
-            anchors.forEach(a => {
-                if (!a.href) return;
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=15_000)
+                except PWTimeoutError:
+                    pass
 
-                const href = a.href.toLowerCase();
+                await page.wait_for_selector("a", timeout=30_000)
 
-                // only PDFs
-                if (href.includes(".pdf")) {
-                    results.push(a.href);
-                }
-            });
+                links = await page.evaluate("""() => {
+                    const results = [];
+                    const anchors = document.querySelectorAll("a");
 
-            return results;
-        }""")
+                    anchors.forEach(a => {
+                        if (!a.href) return;
 
-        await browser.close()
-        return links
+                        const href = a.href.toLowerCase();
+
+                        // only PDFs
+                        if (href.includes(".pdf")) {
+                            results.push(a.href);
+                        }
+                    });
+
+                    return results;
+                }""")
+
+                await browser.close()
+
+            print("Page rendered.\n")
+            return links
+
+        except PWTimeoutError as e:
+            last_error = e
+            if attempt < PLAYWRIGHT_RETRIES:
+                await asyncio.sleep(attempt * 5)
+
+        except Exception as e:
+            last_error = e
+            if attempt < PLAYWRIGHT_RETRIES:
+                await asyncio.sleep(5)
+
+    print(f"[!] Failed to fetch page after {PLAYWRIGHT_RETRIES} attempts. Last error: {last_error}")
+    return []
 
 
 # ================= DOWNLOAD =================
 async def async_download(session, url, dest):
+    proxy = get_proxy()
     async with DOWNLOAD_SEM:
         try:
             if os.path.exists(dest):
                 return
 
-            async with session.get(url, ssl=False) as resp:
+            async with session.get(url, proxy=proxy, timeout=aiohttp.ClientTimeout(total=90)) as resp:
                 if resp.status != 200:
                     print(f"Failed {resp.status}: {url}")
                     return
@@ -113,7 +198,7 @@ async def main():
 
     print(f"Found {len(urls)} PDFs")
 
-    connector = aiohttp.TCPConnector(ssl=False)
+    connector = make_connector()
 
     async with aiohttp.ClientSession(connector=connector) as session:
         planned = reorder_and_plan(BASE_DIR, urls)

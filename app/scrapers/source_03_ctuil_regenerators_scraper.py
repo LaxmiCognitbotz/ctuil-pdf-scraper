@@ -1,15 +1,21 @@
 """
 Scraper for: https://ctuil.in/regenerators
 Downloads PDFs from "Effective date of connectivity wise" column, and renames them with month prefix.
+
+Output Directory: uploads/CTUIL-Regenerators-Effective-Date-wise
 """
 
 import os
 import re
+import ssl
 import asyncio
+from urllib.parse import unquote
 
 import aiohttp
-from urllib.parse import unquote
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+
+load_dotenv(verbose=True)
 
 PAGE_URL   = "https://ctuil.in/regenerators"
 BASE_URL   = "https://ctuil.in"
@@ -21,6 +27,49 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0",
     "Referer": PAGE_URL,
 }
+
+# ==== Proxy Settings ====
+PROXY_ENABLED      = os.getenv("PROXY_ENABLED", "false").lower() == "true"
+PROXY_URL          = os.getenv("PROXY_URL", "")
+PROXY_INSECURE_SSL = os.getenv("PROXY_INSECURE_SSL", "false").lower() == "true"
+
+PLAYWRIGHT_RETRIES = 3
+
+CHROMIUM_ARGS = [
+    "--disable-gpu",
+    "--disable-software-rasterizer",
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--disable-default-apps",
+    "--disable-sync",
+    "--disable-translate",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--mute-audio",
+    "--ignore-certificate-errors",
+    "--ignore-ssl-errors",
+    "--disable-dev-tools",
+    "--disable-hang-monitor",
+    "--disable-prompt-on-repost",
+    "--disable-client-side-phishing-detection",
+    "--password-store=basic",
+]
+
+
+# ==== Proxy Helpers ====
+def get_proxy() -> str | None:
+    return PROXY_URL if PROXY_ENABLED else None
+
+def get_ssl_context():
+    if PROXY_INSECURE_SSL:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    return None
+
+def make_connector() -> aiohttp.TCPConnector:
+    return aiohttp.TCPConnector(ssl=get_ssl_context())
 
 
 def safe_filename(url: str) -> str:
@@ -40,24 +89,62 @@ def make_display_name(month: str, url: str) -> str:
 
 # ==== Fetch Page ====
 async def fetch_rendered_html() -> str:
-    from playwright.async_api import async_playwright
+    from playwright.async_api import async_playwright, TimeoutError as PWTimeoutError
 
-    print("Launching headless browser...")
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+    last_error = None
 
-        # Use domcontentloaded — site never reaches networkidle
-        await page.goto(PAGE_URL, wait_until="domcontentloaded", timeout=30000)
+    for attempt in range(1, PLAYWRIGHT_RETRIES + 1):
+        print(f"Launching headless browser...")
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=CHROMIUM_ARGS,
+                )
+                context = await browser.new_context(
+                    ignore_https_errors=True,
+                    user_agent=HEADERS["User-Agent"],
+                    extra_http_headers={"Referer": HEADERS["Referer"]},
+                    proxy={"server": PROXY_URL} if PROXY_ENABLED and PROXY_URL else None,
+                )
+                page = await context.new_page()
 
-        # Wait for table with PDF links to appear
-        await page.wait_for_selector("table a[href]", timeout=15000)
+                await page.goto(PAGE_URL, wait_until="domcontentloaded", timeout=60_000)
 
-        html = await page.content()
-        await browser.close()
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=15_000)
+                except PWTimeoutError:
+                    pass
 
-    print("Page rendered.\n")
-    return html
+                await page.wait_for_selector("table a[href]", timeout=30_000)
+
+                html = await page.content()
+                await browser.close()
+
+            print("Page rendered.\n")
+            return html
+
+        except PWTimeoutError as e:
+            last_error = e
+            if attempt < PLAYWRIGHT_RETRIES:
+                await asyncio.sleep(attempt * 5)
+
+        except Exception as e:
+            last_error = e
+            if attempt < PLAYWRIGHT_RETRIES:
+                await asyncio.sleep(5)
+
+    return await _fetch_html_aiohttp()
+
+
+async def _fetch_html_aiohttp() -> str:
+    connector = make_connector()
+    proxy = get_proxy()
+    async with aiohttp.ClientSession(headers=HEADERS, connector=connector) as session:
+        async with session.get(PAGE_URL, proxy=proxy, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+            resp.raise_for_status()
+            text = await resp.text()
+    return text
 
 
 # ==== Extract Links ====
@@ -102,9 +189,10 @@ def extract_links(html: str) -> list:
 
 # ==== Download ====
 async def async_download(session, url: str, dest: str):
+    proxy = get_proxy()
     async with DOWNLOAD_SEM:
         try:
-            async with session.get(url) as resp:
+            async with session.get(url, proxy=proxy, timeout=aiohttp.ClientTimeout(total=90)) as resp:
                 if resp.status != 200:
                     print(f"[SKIP {resp.status}] {url}")
                     return
@@ -204,7 +292,8 @@ async def main():
         print("Nothing new. All files up to date.")
         return
 
-    async with aiohttp.ClientSession(headers=HEADERS) as session:
+    connector = make_connector()
+    async with aiohttp.ClientSession(headers=HEADERS, connector=connector) as session:
         tasks = [async_download(session, url, dest) for url, dest in to_download]
         await asyncio.gather(*tasks)
 

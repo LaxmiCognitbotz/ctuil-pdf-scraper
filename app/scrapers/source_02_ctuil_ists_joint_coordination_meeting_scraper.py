@@ -1,18 +1,24 @@
 """
 Scraper for: https://ctuil.in/ists-joint-coordination-meeting
 Downloads PDFs from "Notice" and "Minutes" columns for each region.
+
+Output Directory: uploads/CTUIL-ISTS-JCC
 """
 
 import os
 import re
+import ssl
 import asyncio
+from urllib.parse import urljoin, unquote
 
 import aiohttp
-from urllib.parse import urljoin, unquote
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+
+load_dotenv(verbose=True)
 
 # ==== Config ====
-BASE_URL = "https://ctuil.in/ists-joint-coordination-meeting"
+BASE_URL   = "https://ctuil.in/ists-joint-coordination-meeting"
 OUTPUT_DIR = "uploads/CTUIL-ISTS-JCC"
 
 HEADERS = {
@@ -20,23 +26,44 @@ HEADERS = {
     "Referer": BASE_URL,
 }
 
+# ==== Proxy Settings ====
+PROXY_ENABLED      = os.getenv("PROXY_ENABLED", "false").lower() == "true"
+PROXY_URL          = os.getenv("PROXY_URL", "")
+PROXY_INSECURE_SSL = os.getenv("PROXY_INSECURE_SSL", "false").lower() == "true"
+
 # Normalize region text from table → folder name
 REGION_FOLDER_MAP = {
-    "northern region": "Northern Region",
-    "western region": "Western Region",
-    "southern region": "Southern Region",
-    "eastern region": "Eastern Region",
+    "northern region":      "Northern Region",
+    "western region":       "Western Region",
+    "southern region":      "Southern Region",
+    "eastern region":       "Eastern Region",
     "north eastern region": "North Eastern Region",
     "north-eastern region": "North Eastern Region",
     "ner": "North Eastern Region",
-    "nr": "Northern Region",
-    "wr": "Western Region",
-    "sr": "Southern Region",
-    "er": "Eastern Region",
+    "nr":  "Northern Region",
+    "wr":  "Western Region",
+    "sr":  "Southern Region",
+    "er":  "Eastern Region",
 }
 
-PAGE_SEM = asyncio.Semaphore(10)
+PAGE_SEM     = asyncio.Semaphore(10)
 DOWNLOAD_SEM = asyncio.Semaphore(20)
+
+
+# ==== Proxy Helpers ====
+def get_proxy() -> str | None:
+    return PROXY_URL if PROXY_ENABLED else None
+
+def get_ssl_context():
+    if PROXY_INSECURE_SSL:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    return None
+
+def make_connector() -> aiohttp.TCPConnector:
+    return aiohttp.TCPConnector(ssl=get_ssl_context())
 
 
 # ==== Utils ====
@@ -108,7 +135,10 @@ def extract_meeting_label(stem: str, doc_type: str) -> str:
 
     # Handle multi-region specials like "Special JCC WR-ER-SR ..."
     if re.search(r"\bspecial\b", stem, re.IGNORECASE):
-        multi = re.search(r"\b(NER|NR|ER|WR|SR)(?:\s*[-/]\s*(NER|NR|ER|WR|SR))+(?:\s*[-/]\s*(NER|NR|ER|WR|SR))?\b", stem, re.IGNORECASE)
+        multi = re.search(
+            r"\b(NER|NR|ER|WR|SR)(?:\s*[-/]\s*(NER|NR|ER|WR|SR))+(?:\s*[-/]\s*(NER|NR|ER|WR|SR))?\b",
+            stem, re.IGNORECASE,
+        )
         if multi:
             codes = [c.upper() for c in multi.groups() if c]
             meeting_type = meeting_type or "JCC"
@@ -116,7 +146,6 @@ def extract_meeting_label(stem: str, doc_type: str) -> str:
         if meeting_type and region_code:
             return f"Special {meeting_type}-{region_code}"
 
-    # Fallback: return cleaned stem (still safe filename via safe_filename())
     return stem.strip()
 
 
@@ -127,9 +156,7 @@ def formatted_filename(doc_type: str, url: str) -> str:
         ext = "." + ext.lower()
     else:
         stem, ext = original, ".pdf"
-
-    meeting_label = extract_meeting_label(stem, doc_type)
-    return f"{doc_type}_{meeting_label}{ext}"
+    return f"{doc_type}_{extract_meeting_label(stem, doc_type)}{ext}"
 
 
 def ensure_region_dir(region: str) -> str:
@@ -150,17 +177,20 @@ def ensure_region_dir(region: str) -> str:
 
     return new_dir
 
-# ==== Fetch HTML ====
+
+# ==== Network ====
 async def async_fetch(session, url):
+    proxy = get_proxy()
     async with PAGE_SEM:
-        async with session.get(url) as resp:
+        async with session.get(url, proxy=proxy) as resp:
             return await resp.text()
 
 # ==== Download File ====
 async def async_download(session, url, dest):
+    proxy = get_proxy()
     async with DOWNLOAD_SEM:
         try:
-            async with session.get(url) as resp:
+            async with session.get(url, proxy=proxy, timeout=aiohttp.ClientTimeout(total=90)) as resp:
                 if resp.status != 200:
                     print(f"[SKIP {resp.status}] {url}")
                     return
@@ -174,7 +204,8 @@ async def async_download(session, url, dest):
         except Exception as e:
             print(f"[ERROR] {url} → {e}")
 
-# ==== Get total pages ====
+
+# ==== Parsing ====
 def get_total_pages(html: str) -> int:
     m = re.search(r"Displaying\s+\d+\s+to\s+\d+\s+of\s+(\d+)", html, re.I)
     if m:
@@ -231,13 +262,14 @@ def extract_rows(html: str) -> list:
 
     return rows
 
-# ==== Collect All Pages ====
+
+# ==== Collect ====
 async def collect_all(session) -> dict:
     """
     Fetch all pages (tab=0 returns full unfiltered table).
     Returns: { region: { "Notice": [urls], "Minutes": [urls] } }
     """
-    first_url = f"{BASE_URL}?p=ajax&page=1&tab=0"
+    first_url  = f"{BASE_URL}?p=ajax&page=1&tab=0"
     first_html = await async_fetch(session, first_url)
     total_pages = get_total_pages(first_html)
     print(f"Total pages: {total_pages}")
@@ -259,6 +291,7 @@ async def collect_all(session) -> dict:
             collected[region]["Minutes"].extend(row["Minutes"])
 
     return collected
+
 
 # ==== Reorder Files (Shift Logic) ====
 def reorder_files(dest_dir, urls, doc_type):
@@ -293,9 +326,12 @@ def reorder_files(dest_dir, urls, doc_type):
 
         counter += 1
 
+
 # ==== Main ====
 async def main():
-    async with aiohttp.ClientSession(headers=HEADERS) as session:
+    connector = make_connector()
+
+    async with aiohttp.ClientSession(headers=HEADERS, connector=connector) as session:
         collected = await collect_all(session)
 
         print("\nFound regions:")

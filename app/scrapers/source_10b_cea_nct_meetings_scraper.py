@@ -1,19 +1,69 @@
 """
 Scraper for: https://cea.nic.in/comm-trans/national-committee-on-transmission/?lang=en
 Download Minutes and MoM pdfs from the page.
+
+Output Directory: uploads/CEA-NCT-Minutes
 """
 
 import os
 import re
+import ssl
 import asyncio
 import aiohttp
+
 from urllib.parse import unquote
-from playwright.async_api import async_playwright
+from playwright.async_api import async_playwright, TimeoutError as PWTimeoutError
+from dotenv import load_dotenv
+
+load_dotenv(verbose=True)
 
 BASE_URL = "https://cea.nic.in/comm-trans/national-committee-on-transmission/?lang=en"
 BASE_DIR = "uploads/CEA-NCT-Minutes"
 
 DOWNLOAD_SEM = asyncio.Semaphore(10)
+
+# ==== Proxy Settings ====
+PROXY_ENABLED      = os.getenv("PROXY_ENABLED", "false").lower() == "true"
+PROXY_URL          = os.getenv("PROXY_URL", "")
+PROXY_INSECURE_SSL = os.getenv("PROXY_INSECURE_SSL", "false").lower() == "true"
+
+PLAYWRIGHT_RETRIES = 3
+
+CHROMIUM_ARGS = [
+    "--disable-gpu",
+    "--disable-software-rasterizer",
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--disable-default-apps",
+    "--disable-sync",
+    "--disable-translate",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--mute-audio",
+    "--ignore-certificate-errors",
+    "--ignore-ssl-errors",
+    "--disable-dev-tools",
+    "--disable-hang-monitor",
+    "--disable-prompt-on-repost",
+    "--disable-client-side-phishing-detection",
+    "--password-store=basic",
+]
+
+
+# ==== Proxy Helpers ====
+def get_proxy() -> str | None:
+    return PROXY_URL if PROXY_ENABLED else None
+
+def get_ssl_context():
+    if PROXY_INSECURE_SSL:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    return None
+
+def make_connector() -> aiohttp.TCPConnector:
+    return aiohttp.TCPConnector(ssl=get_ssl_context())
 
 
 # ===== safe filename =====
@@ -55,53 +105,87 @@ def safe_filename(url: str) -> str:
 
 # ===== Extract Links =====
 async def extract_links():
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+    last_error = None
 
-        await page.goto(BASE_URL)
-        await page.wait_for_selector("table")
+    for attempt in range(1, PLAYWRIGHT_RETRIES + 1):
+        print(f"Launching headless browser...")
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=CHROMIUM_ARGS,
+                )
+                context = await browser.new_context(
+                    ignore_https_errors=True,
+                    proxy={"server": PROXY_URL} if PROXY_ENABLED and PROXY_URL else None,
+                )
+                page = await context.new_page()
 
-        data = await page.evaluate("""() => {
-            const results = [];
-            const rows = document.querySelectorAll("table tbody tr");
+                await page.goto(BASE_URL, wait_until="domcontentloaded", timeout=60_000)
 
-            rows.forEach(row => {
-                const links = row.querySelectorAll("a");
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=15_000)
+                except PWTimeoutError:
+                    pass
 
-                links.forEach(link => {
-                    if (!link.href) return;
+                await page.wait_for_selector("table", timeout=30_000)
 
-                    const href = link.href.toLowerCase();
-                    const text = link.innerText.toLowerCase();
+                data = await page.evaluate("""() => {
+                    const results = [];
+                    const rows = document.querySelectorAll("table tbody tr");
 
-                    // only PDF
-                    if (!href.includes(".pdf")) return;
+                    rows.forEach(row => {
+                        const links = row.querySelectorAll("a");
 
-                    // capture both Minutes + MoM
-                    if (text.includes("minutes") || text.includes("mom")) {
-                        results.push({
-                            url: link.href,
-                            title: row.innerText.trim()
+                        links.forEach(link => {
+                            if (!link.href) return;
+
+                            const href = link.href.toLowerCase();
+                            const text = link.innerText.toLowerCase();
+
+                            // only PDF
+                            if (!href.includes(".pdf")) return;
+
+                            // capture both Minutes + MoM
+                            if (text.includes("minutes") || text.includes("mom")) {
+                                results.push({
+                                    url: link.href,
+                                    title: row.innerText.trim()
+                                });
+                            }
                         });
-                    }
-                });
-            });
+                    });
 
-            return results;
-        }""")
+                    return results;
+                }""")
 
-        await browser.close()
-        return data
+                await browser.close()
+
+            print("Page rendered.\n")
+            return data
+
+        except PWTimeoutError as e:
+            last_error = e
+            if attempt < PLAYWRIGHT_RETRIES:
+                await asyncio.sleep(attempt * 5)
+
+        except Exception as e:
+            last_error = e
+            if attempt < PLAYWRIGHT_RETRIES:
+                await asyncio.sleep(5)
+
+    print(f"[!] Failed to fetch page after {PLAYWRIGHT_RETRIES} attempts. Last error: {last_error}")
+    return []
 
 # ===== Download =====
 async def async_download(session, url, dest):
+    proxy = get_proxy()
     async with DOWNLOAD_SEM:
         try:
             if os.path.exists(dest):
                 return
 
-            async with session.get(url) as resp:
+            async with session.get(url, proxy=proxy, timeout=aiohttp.ClientTimeout(total=90)) as resp:
                 if resp.status != 200:
                     print(f"Failed {resp.status}: {url}")
                     return
@@ -154,8 +238,7 @@ async def main():
 
     print(f"Found {len(items)} Minutes PDFs")
 
-    # SSL bypass
-    connector = aiohttp.TCPConnector(ssl=False)
+    connector = make_connector()
 
     async with aiohttp.ClientSession(connector=connector) as session:
         planned = reorder_and_plan(BASE_DIR, items)

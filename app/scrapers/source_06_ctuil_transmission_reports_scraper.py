@@ -1,7 +1,10 @@
 """
 Scraper for: https://cea.nic.in/transmission-reports/?lang=en
 Download PDFs from "Transmission Reports" year wise for 2 years.
+
+Output Directory: uploads/CEA-Transmission-Reports
 """
+
 import os
 import re
 import time
@@ -13,12 +16,29 @@ import requests
 from dateutil.relativedelta import relativedelta
 from urllib3.exceptions import InsecureRequestWarning
 from requests.exceptions import RequestException
+from dotenv import load_dotenv
+
+load_dotenv(verbose=True)
 
 BASE_URL = "https://cea.nic.in/transmission-reports/?lang=en"
 AJAX_URL = "https://cea.nic.in/wp-admin/admin-ajax.php"
 BASE_DIR = "uploads/CEA-Transmission-Reports"
 MAX_DOWNLOAD_WORKERS = 5
 MAX_RETRIES = 4
+
+# ==== Proxy Settings ====
+PROXY_ENABLED      = os.getenv("PROXY_ENABLED", "false").lower() == "true"
+PROXY_URL          = os.getenv("PROXY_URL", "")
+PROXY_INSECURE_SSL = os.getenv("PROXY_INSECURE_SSL", "false").lower() == "true"
+
+
+# ==== Proxy Helpers ====
+def get_proxies() -> dict | None:
+    return {"http": PROXY_URL, "https": PROXY_URL} if PROXY_ENABLED else None
+
+def get_verify() -> bool:
+    return not PROXY_INSECURE_SSL
+
 
 TBCB_MARKER_PATTERN = re.compile(
     r"(tbcb|tariff\s+based\s+competitive\s+bidding|competitive\s+bidding\s+route|प्रतिस्पर्धी\s+बोली)",
@@ -143,7 +163,13 @@ def fetch_reports_for_month(session, ym):
     last_error = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            resp = session.post(AJAX_URL, data=payload, timeout=45, verify=False)
+            resp = session.post(
+                AJAX_URL,
+                data=payload,
+                timeout=45,
+                verify=get_verify(),
+                proxies=get_proxies(),
+            )
             if resp.status_code == 200:
                 return parse_reports_from_html(resp.text, ym)
             last_error = RuntimeError(f"AJAX failed ({resp.status_code}) for {ym}")
@@ -169,7 +195,12 @@ def download_pdf(session, item):
         last_error = None
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                resp = session.get(item["url"], timeout=90, verify=False)
+                resp = session.get(
+                    item["url"],
+                    timeout=90,
+                    verify=get_verify(),
+                    proxies=get_proxies(),
+                )
                 if resp.status_code == 200:
                     with open(path, "wb") as f:
                         f.write(resp.content)
