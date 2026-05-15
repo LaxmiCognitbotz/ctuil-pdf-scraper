@@ -1,6 +1,8 @@
 """
 RECPDCL / RECTPCL Tender Scraper
 Target: https://www.recpdcl.in/rectpcltender
+
+Output Directory: uploads/RECPDCL-RECTPCL-TENDER
 """
 
 from __future__ import annotations
@@ -8,6 +10,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import ssl
 import sys
 import time
 import unicodedata
@@ -24,6 +27,10 @@ try:
 except ImportError:
     sys.exit("Run: pip install requests")
 
+from dotenv import load_dotenv
+
+load_dotenv(verbose=True)
+
 BASE_URL   = "https://www.recpdcl.in"
 TENDER_URL = "https://www.recpdcl.in/rectpcltender"
 
@@ -31,6 +38,20 @@ UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
+
+# ==== Proxy Settings ====
+PROXY_ENABLED      = os.getenv("PROXY_ENABLED", "false").lower() == "true"
+PROXY_URL          = os.getenv("PROXY_URL", "")
+PROXY_INSECURE_SSL = os.getenv("PROXY_INSECURE_SSL", "false").lower() == "true"
+
+
+# ==== Proxy Helpers ====
+def get_proxies() -> dict | None:
+    return {"http": PROXY_URL, "https": PROXY_URL} if PROXY_ENABLED else None
+
+def get_verify() -> bool:
+    return not PROXY_INSECURE_SSL
+
 
 # Matched against child-link TEXT only (not the URL).
 # Boundary rule: not preceded by a letter, not followed by a letter.
@@ -340,7 +361,7 @@ def make_folder_name(user_input: str, max_len: int = 60) -> str:
 def download_pdf(url: str, dest: Path, session: requests.Session) -> bool:
     dest.parent.mkdir(parents=True, exist_ok=True)
     try:
-        r = session.get(url, stream=True, timeout=60, verify=False)
+        r = session.get(url, stream=True, timeout=60, proxies=get_proxies(), verify=get_verify())
         r.raise_for_status()
         with open(dest, "wb") as fh:
             for chunk in r.iter_content(65536):
@@ -371,7 +392,7 @@ def run(user_input: str, output_dir: Path):
         "Referer":    BASE_URL + "/",
         "Accept":     "application/pdf,*/*",
     })
-    session.verify = False
+    session.verify = get_verify()
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(
