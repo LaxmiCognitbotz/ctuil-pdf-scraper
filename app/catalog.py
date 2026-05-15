@@ -104,4 +104,12 @@ SCRAPER_CATALOG = [
         "page_url": "https://www.ctuil.in/gna2022updates",
         "output_dir": "uploads/CTUIL-GNA-Connectivity-Fresh",
     },
+    {
+        "endpoint": "/api/v1/scrape/recpdcl-tender",
+        "label": "RECPDCL Tender",
+        "source": "RECPDCL",
+        "page_url": "https://www.recpdcl.in/rectpcltender",
+        "output_dir": "uploads/RECPDCL-RECTPCL-TENDER",
+        "input_required": {"query": "Substring of the tender title to search for"},
+    },
 ]
