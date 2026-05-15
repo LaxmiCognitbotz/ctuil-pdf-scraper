@@ -4,17 +4,18 @@ A REST API built with **FastAPI** that automates PDF extraction and download fro
 
 ## Overview
 
-This project consolidates **14 independent scrapers** into a single API platform. Scrapers target three primary data sources:
+This project consolidates **15 independent scrapers** into a single API platform. Scrapers target four primary data sources:
 
 - **CTUIL** (ctuil.in) — Consultation meetings, coordination meetings, RE generators, reallocation meetings, bidding calendars, compliance reports, revocations, renewable energy margins, bulk consumer data, and GNA Connectivity Fresh grants.
 - **CEA** (cea.nic.in) — Transmission reports (RTM/TBCB), 500 GW RE integration documents, and NCT meeting minutes.
 - **PFCCLINDIA** (pfcclindia.com) — Tender documents filtered by keyword (Corrigendum, RFP, Extension, etc.) with user-supplied query.
+- **RECPDCL** (recpdcl.in) — Tender documents filtered by keyword with user-supplied query.
 
 All downloaded PDFs are organized into the `uploads/` directory with incremental naming and deduplication.
 
 ## Key Features
 
-- **14 scraper endpoints** covering CTUIL, CEA, and PFCCLINDIA data sources
+- **15 scraper endpoints** covering CTUIL, CEA, PFCCLINDIA, and RECPDCL data sources
 - **Strict wrapper architecture** — scraper scripts are imported and called as black boxes, never modified
 - **Consistent API responses** — every endpoint returns a standardized `APIResponse` envelope with status, message, data, error, and UTC timestamp
 - **Proper HTTP status codes** — 200 on success, 500 on failure with full traceback
@@ -88,6 +89,14 @@ This endpoint accepts **form data** (not JSON). Both fields must be sent as `mul
 | -------- | ------------------------------------ | ---------- | -------- | ------------------------------------------- |
 | `POST` | `/api/v1/scrape/pfcclindia-tender` | `query`  | **Yes**  | Substring of the tender title to search for |
 
+### RECPDCL Scrapers
+
+This endpoint accepts **form data** (not JSON). Both fields must be sent as `multipart/form-data`.
+
+| Method   | Endpoint                             | Form Field | Required | Description                                 |
+| -------- | ------------------------------------ | ---------- | -------- | ------------------------------------------- |
+| `POST` | `/api/v1/scrape/recpdcl-tender` | `query`  | **Yes**  | Substring of the tender title to search for |
+
 
 
 Keywords filtered from child PDF links: `Corrigendum`, `Extension`, `Successful`, `RFP`, `Postponement`, `Qualified`, `Amendment`.
@@ -118,6 +127,10 @@ ctuil-pdf-scraper/
 │   │       ├── routes.py      # 1 PFCCLINDIA POST endpoint (form data)
 │   │       └── services.py    # 1 PFCCLINDIA service method
 │   │
+│   │   └── recpdcl/
+│   │       ├── routes.py      # 1 RECPDCL POST endpoint (form data)
+│   │       └── services.py    # 1 RECPDCL service method
+│   │
 │   └── scrapers/              
 │       ├── __init__.py
 │       ├── source_01_ctuil_ists_consultation_meeting_scraper.py
@@ -132,6 +145,7 @@ ctuil-pdf-scraper/
 │       ├── source_10a_cea_potential_rezones_scraper.py
 │       ├── source_10b_cea_nct_meetings_scraper.py
 │       ├── source_10c_pfcclindia_tender_scraper.py
+│       ├── source_10c_recpdcl_tender_scraper.py
 │       ├── source_11_ctuil_substation_bulk_consumers_scraper.py
 │       └── source_12_ctuil_gna_connectivity_fresh_scraper.py
 │
@@ -149,7 +163,8 @@ ctuil-pdf-scraper/
     ├── CEA-500GW/
     ├── CEA-NCT-Minutes/
     ├── CTUIL-GNA-Connectivity-Fresh/
-    └── PFCCL-INDIA-TENDER/         
+    ├── PFCCL-INDIA-TENDER/         
+    └── RECPDCL-RECTPCL-TENDER/         
 ```
 
 ## Tech Stack

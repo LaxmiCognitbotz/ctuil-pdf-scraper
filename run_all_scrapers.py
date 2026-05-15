@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # Adjust the base URL if your app runs on a different host/port
 BASE_URL = "http://127.0.0.1:8000/api/v1"
 
-# All scraping endpoints except /api/v1/scrape/pfcclindia-tender
+# All scraping endpoints except /api/v1/scrape/pfcclindia-tender and /api/v1/scrape/recpdcl-tender
 ENDPOINTS = [
     "/scrape/transmission-reports",
     "/scrape/potential-re-zones",

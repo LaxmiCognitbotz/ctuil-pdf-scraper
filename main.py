@@ -7,6 +7,7 @@ from app.schemas import APIResponse
 from app.modules.ctuil.routes import router as ctuil_router
 from app.modules.cea.routes import router as cea_router
 from app.modules.pfcclindia.routes import router as pfcclindia_router
+from app.modules.recpdcl.routes import router as recpdcl_router
 
 # ==== Logging ====
 logging.basicConfig(
@@ -53,7 +54,7 @@ def list_scrapers():
 app.include_router(ctuil_router, prefix="/api/v1")
 app.include_router(cea_router, prefix="/api/v1")
 app.include_router(pfcclindia_router, prefix="/api/v1")
-
+app.include_router(recpdcl_router, prefix="/api/v1")
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
