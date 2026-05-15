@@ -1,8 +1,6 @@
 """
 RECPDCL / RECTPCL Tender Scraper
 Target: https://www.recpdcl.in/rectpcltender
-
-Output Directory: uploads/RECPDCL-RECTPCL-TENDER
 """
 
 from __future__ import annotations
