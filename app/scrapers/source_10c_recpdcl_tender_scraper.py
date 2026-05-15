@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import os
 import re
-import ssl
 import sys
 import time
 import unicodedata
@@ -29,7 +28,7 @@ except ImportError:
 
 from dotenv import load_dotenv
 
-load_dotenv(verbose=True)
+load_dotenv()
 
 BASE_URL   = "https://www.recpdcl.in"
 TENDER_URL = "https://www.recpdcl.in/rectpcltender"
@@ -394,15 +393,20 @@ def run(user_input: str, output_dir: Path):
     })
     session.verify = get_verify()
 
+    # Build Playwright proxy config from .env
+    pw_proxy = {"server": PROXY_URL} if PROXY_ENABLED and PROXY_URL else None
+
     with sync_playwright() as pw:
         browser = pw.chromium.launch(
             headless=True,
             args=["--ignore-certificate-errors"],
+            proxy=pw_proxy,
         )
         ctx = browser.new_context(
             user_agent=UA,
             viewport={"width": 1280, "height": 900},
             ignore_https_errors=True,
+            proxy=pw_proxy,
             extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
         )
         page = ctx.new_page()
