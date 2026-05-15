@@ -1,22 +1,54 @@
 """
 Scraper for: https://ctuil.in/complianceandfc
 Download PDFs from "Connectivity Grantees" table.
+
+Output Directory: uploads/CTUIL-Compliance-PDFs
 """
+
 import os
 import re
+import ssl
 import asyncio
+import urllib3
+from urllib.parse import urljoin, unquote
+
 import aiohttp
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, unquote
+from dotenv import load_dotenv
+
+load_dotenv(verbose=True)
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==== Config ====
-BASE_URL = "https://ctuil.in/complianceandfc"
+BASE_URL     = "https://ctuil.in/complianceandfc"
 DOWNLOAD_DIR = "uploads/CTUIL-Compliance-PDFs"
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 DOWNLOAD_SEM = asyncio.Semaphore(10)
+
+# ==== Proxy Settings ====
+PROXY_ENABLED      = os.getenv("PROXY_ENABLED", "false").lower() == "true"
+PROXY_URL          = os.getenv("PROXY_URL", "")
+PROXY_INSECURE_SSL = os.getenv("PROXY_INSECURE_SSL", "false").lower() == "true"
+
+
+# ==== Proxy Helpers ====
+def get_proxy() -> str | None:
+    return PROXY_URL if PROXY_ENABLED else None
+
+def get_ssl_context():
+    if PROXY_INSECURE_SSL:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    return None
+
+def make_connector() -> aiohttp.TCPConnector:
+    return aiohttp.TCPConnector(ssl=get_ssl_context())
 
 
 # ==== Safe Filename ====
@@ -43,7 +75,10 @@ def safe_filename(url: str) -> str:
 
 # ==== Fetch Main Links ====
 def fetch_main_links():
-    res = requests.get(BASE_URL)
+    proxies = {"http": PROXY_URL, "https": PROXY_URL} if PROXY_ENABLED else None
+    verify  = not PROXY_INSECURE_SSL
+
+    res = requests.get(BASE_URL, proxies=proxies, verify=verify)
     res.raise_for_status()
 
     soup = BeautifulSoup(res.text, "html.parser")
@@ -72,12 +107,13 @@ def fetch_main_links():
 
 # ==== Download ====
 async def async_download(session, url, dest):
+    proxy = get_proxy()
     async with DOWNLOAD_SEM:
         try:
             if os.path.exists(dest):
                 return
 
-            async with session.get(url) as resp:
+            async with session.get(url, proxy=proxy, timeout=aiohttp.ClientTimeout(total=90)) as resp:
                 if resp.status != 200:
                     print(f"[FAIL] {url}")
                     return
@@ -135,7 +171,9 @@ async def main():
 
     print(f"[INFO] New files to download: {len(planned)}")
 
-    async with aiohttp.ClientSession() as session:
+    connector = make_connector()
+
+    async with aiohttp.ClientSession(connector=connector) as session:
         tasks = [async_download(session, url, dest) for url, dest in planned]
         await asyncio.gather(*tasks)
 

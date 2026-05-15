@@ -1,15 +1,22 @@
 """
 Scraper for: https://ctuil.in/ists-consultation-meeting
 Downloads PDFs from "Agenda" and "Minutes" columns for each region.
+
+Output Directory: uploads/CTUIL-ISTS-CMETS
 """
 
 import os
 import re
+import ssl
 import asyncio
-import aiohttp
-from bs4 import BeautifulSoup
-from urllib.parse import urljoin, unquote
 from collections import defaultdict
+from urllib.parse import urljoin, unquote
+
+import aiohttp
+from dotenv import load_dotenv
+from bs4 import BeautifulSoup
+
+load_dotenv(verbose=True)
 
 # ==== Config ====
 BASE_URL   = "https://ctuil.in/ists-consultation-meeting"
@@ -21,6 +28,10 @@ HEADERS = {
     "Referer": BASE_URL,
 }
 
+# ==== Proxy Settings ====
+PROXY_ENABLED      = os.getenv("PROXY_ENABLED", "false").lower() == "true"
+PROXY_URL          = os.getenv("PROXY_URL", "")
+PROXY_INSECURE_SSL = os.getenv("PROXY_INSECURE_SSL", "false").lower() == "true"
 
 REGION_MAP = {
     "northern region":      "Northern Region",
@@ -33,6 +44,23 @@ REGION_MAP = {
 
 PAGE_SEM     = asyncio.Semaphore(10)
 DOWNLOAD_SEM = asyncio.Semaphore(20)
+
+
+# ==== Proxy Helpers ====
+def get_proxy() -> str | None:
+    return PROXY_URL if PROXY_ENABLED else None
+
+def get_ssl_context():
+    if PROXY_INSECURE_SSL:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    return None
+
+def make_connector() -> aiohttp.TCPConnector:
+    ssl_ctx = get_ssl_context()
+    return aiohttp.TCPConnector(ssl=ssl_ctx)
 
 
 # ==== Helpers ====
@@ -112,10 +140,15 @@ def formatted_filename(doc_type: str, url: str) -> str:
 
 # ==== Network ====
 async def fetch_html(session, url):
+    proxy = get_proxy()
     async with PAGE_SEM:
         for attempt in range(3):
             try:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as r:
+                async with session.get(
+                    url,
+                    proxy=proxy,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as r:
                     r.raise_for_status()
                     return await r.text()
             except Exception:
@@ -123,6 +156,7 @@ async def fetch_html(session, url):
     return ""
 
 async def download(session, url, dest):
+    proxy = get_proxy()
     async with DOWNLOAD_SEM:
 
         if os.path.exists(dest):
@@ -130,7 +164,11 @@ async def download(session, url, dest):
 
         for attempt in range(3):
             try:
-                async with session.get(url, timeout=aiohttp.ClientTimeout(total=90)) as r:
+                async with session.get(
+                    url,
+                    proxy=proxy,
+                    timeout=aiohttp.ClientTimeout(total=90),
+                ) as r:
                     if r.status != 200:
                         return
                     data = await r.read()
@@ -250,7 +288,9 @@ def print_summary(counts):
 
 # ==== Main ====
 async def main():
-    async with aiohttp.ClientSession(headers=HEADERS) as session:
+    connector = make_connector()
+
+    async with aiohttp.ClientSession(headers=HEADERS, connector=connector) as session:
 
         print("Collecting...\n")
         all_records = await collect_all(session)

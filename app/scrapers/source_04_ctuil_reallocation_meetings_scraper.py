@@ -1,22 +1,76 @@
 """
-Scraper for: https://ctuil.in/reallocation_meetings
+Scraper for: https://www.ctuil.in/reallocation_meetings
 Download PDFs from "Agenda" and "Minutes" columns for each region.
+
+Output Directory: uploads/CTUIL-Reallocation-Meetings
 """
 
 import os
 import re
+import ssl
 import asyncio
-import aiohttp
 from urllib.parse import unquote, urljoin, quote
-from playwright.async_api import async_playwright
+
+import aiohttp
+from playwright.async_api import async_playwright, TimeoutError as PWTimeoutError
+from dotenv import load_dotenv
+
+load_dotenv(verbose=True)
 
 BASE_URL = "https://www.ctuil.in/reallocation_meetings"
 BASE_DIR = "uploads/CTUIL-Reallocation-Meetings"
 
 DOWNLOAD_SEM = asyncio.Semaphore(10)
 
+PROXY_ENABLED      = os.getenv("PROXY_ENABLED", "false").lower() == "true"
+PROXY_URL          = os.getenv("PROXY_URL", "")
+PROXY_INSECURE_SSL = os.getenv("PROXY_INSECURE_SSL", "false").lower() == "true"
 
-# ==== Safe Pipeline ====
+PLAYWRIGHT_RETRIES = 3
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
+CHROMIUM_ARGS = [
+    "--disable-gpu",
+    "--disable-software-rasterizer",
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--disable-default-apps",
+    "--disable-sync",
+    "--disable-translate",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--mute-audio",
+    "--ignore-certificate-errors",
+    "--ignore-ssl-errors",
+    "--disable-hang-monitor",
+    "--disable-prompt-on-repost",
+    "--password-store=basic",
+]
+
+
+def get_proxy() -> str | None:
+    return PROXY_URL if PROXY_ENABLED else None
+
+def get_ssl_context():
+    if PROXY_INSECURE_SSL:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    return None
+
+def make_connector() -> aiohttp.TCPConnector:
+    return aiohttp.TCPConnector(ssl=get_ssl_context())
+
+
 def safe_filename(url: str) -> str:
     name = unquote(url.split("/")[-1].split("?")[0])
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
@@ -161,12 +215,13 @@ async def extract_all_regions(page):
 
 # ==== Download Pipeline ====
 async def async_download(session, url, dest):
+    proxy = get_proxy()
     async with DOWNLOAD_SEM:
         try:
             if os.path.exists(dest):
                 return
 
-            async with session.get(url, ssl=False) as resp:
+            async with session.get(url, proxy=proxy, timeout=aiohttp.ClientTimeout(total=90)) as resp:
                 if resp.status != 200:
                     print(f"Failed {resp.status}: {url}")
                     return
@@ -185,41 +240,77 @@ async def async_download(session, url, dest):
 
 # ==== Main Pipeline ====
 async def main():
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+    last_error = None
+    links = None
 
-        await page.goto(BASE_URL)
-        await page.wait_for_selector("table")
+    for attempt in range(1, PLAYWRIGHT_RETRIES + 1):
+        print(f"Launching headless browser (attempt {attempt}/{PLAYWRIGHT_RETRIES})...")
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=CHROMIUM_ARGS,
+                )
+                context = await browser.new_context(
+                    ignore_https_errors=True,
+                    user_agent=HEADERS["User-Agent"],
+                    extra_http_headers={"Accept-Language": HEADERS["Accept-Language"]},
+                    proxy={"server": PROXY_URL} if PROXY_ENABLED and PROXY_URL else None,
+                )
+                page = await context.new_page()
 
-        links = await extract_all_regions(page)
+                await page.goto(BASE_URL, wait_until="domcontentloaded", timeout=60_000)
 
-        await browser.close()
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=15_000)
+                except PWTimeoutError:
+                    print("  [WARN] networkidle timeout — continuing anyway.")
 
-    # remove duplicates
+                await page.wait_for_selector("table", timeout=30_000)
+
+                links = await extract_all_regions(page)
+                await browser.close()
+
+            print("Page rendered successfully.\n")
+            break
+
+        except PWTimeoutError as e:
+            last_error = e
+            print(f"  [TIMEOUT] Attempt {attempt} failed: {e}")
+            if attempt < PLAYWRIGHT_RETRIES:
+                wait_secs = attempt * 5
+                print(f"  Retrying in {wait_secs}s …")
+                await asyncio.sleep(wait_secs)
+
+        except Exception as e:
+            last_error = e
+            print(f"  [ERROR] Attempt {attempt}: {e}")
+            if attempt < PLAYWRIGHT_RETRIES:
+                await asyncio.sleep(5)
+
+    if not links:
+        print(f"[!] Failed to fetch page after {PLAYWRIGHT_RETRIES} attempts. Last error: {last_error}")
+        return
+
     seen = set()
     unique_links = []
-
     for item in links:
         if item not in seen:
             seen.add(item)
             unique_links.append(item)
-
     links = unique_links
 
     print(f"\nTotal unique PDFs: {len(links)}")
 
     # Group by region + type
     grouped = {}
-
     for region, doc_type, url in links:
         grouped.setdefault((region, doc_type), []).append(url)
 
-    connector = aiohttp.TCPConnector(ssl=False)
+    connector = make_connector()
 
     async with aiohttp.ClientSession(connector=connector) as session:
         tasks = []
-
         for (region, doc_type), urls in grouped.items():
             dest_dir = ensure_doc_type_dir(region, doc_type)
 

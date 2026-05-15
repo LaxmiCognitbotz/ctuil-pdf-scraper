@@ -4,14 +4,20 @@ Scraper for: https://www.ctuil.in/revocations
 Downloads and organizes PDFs into two specific folders:
 1. Expected Revocation Under 24.6
 2. Connectivity Gratees Excluded From Revocation
+
+Output Directory: uploads/CTUIL-Revocations-PDFs
 """
 
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.parse import urljoin, unquote
+
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, unquote
+from dotenv import load_dotenv
+
+load_dotenv(verbose=True)
 
 BASE_URL = "https://www.ctuil.in/revocations"
 
@@ -30,6 +36,19 @@ TARGETS = [
 ]
 
 MAX_WORKERS = 10
+
+# ==== Proxy Settings ====
+PROXY_ENABLED      = os.getenv("PROXY_ENABLED", "false").lower() == "true"
+PROXY_URL          = os.getenv("PROXY_URL", "")
+PROXY_INSECURE_SSL = os.getenv("PROXY_INSECURE_SSL", "false").lower() == "true"
+
+
+# ==== Proxy Helpers ====
+def get_proxies() -> dict | None:
+    return {"http": PROXY_URL, "https": PROXY_URL} if PROXY_ENABLED else None
+
+def get_verify() -> bool:
+    return not PROXY_INSECURE_SSL
 
 
 def safe_filename(url: str) -> str:
@@ -83,7 +102,7 @@ def safe_filename(url: str) -> str:
     return f"{stem}{ext}" if stem else f"file{ext}"
 
 def fetch_soup() -> BeautifulSoup:
-    response = requests.get(BASE_URL, timeout=30)
+    response = requests.get(BASE_URL, timeout=30, proxies=get_proxies(), verify=get_verify())
     response.raise_for_status()
     return BeautifulSoup(response.text, "html.parser")
 
@@ -120,7 +139,7 @@ def download_one(url: str, dest: str) -> None:
         if os.path.exists(dest):
             return
 
-        resp = requests.get(url, timeout=60)
+        resp = requests.get(url, timeout=60, proxies=get_proxies(), verify=get_verify())
         if resp.status_code != 200:
             print(f"[SKIP] {url} (HTTP {resp.status_code})")
             return

@@ -1,18 +1,69 @@
 """
 Scraper for: https://www.ctuil.in/renewable-energy
 Download pdfs from "Bays Allocation", "Connectivity margin in ists substations", "Proposed re integration" tables.
+
+Output Directory: uploads/CTUIL-Renewable-Energy
 """
+
 import os
 import re
+import ssl
 import asyncio
-import aiohttp
 from urllib.parse import unquote
-from playwright.async_api import async_playwright
+
+import aiohttp
+from playwright.async_api import async_playwright, TimeoutError as PWTimeoutError
+from dotenv import load_dotenv
+
+load_dotenv(verbose=True)
 
 BASE_URL = "https://www.ctuil.in/renewable-energy"
 BASE_DIR = "uploads/CTUIL-Renewable-Energy"
 
 DOWNLOAD_SEM = asyncio.Semaphore(10)
+
+# ==== Proxy Settings ====
+PROXY_ENABLED      = os.getenv("PROXY_ENABLED", "false").lower() == "true"
+PROXY_URL          = os.getenv("PROXY_URL", "")
+PROXY_INSECURE_SSL = os.getenv("PROXY_INSECURE_SSL", "false").lower() == "true"
+
+PLAYWRIGHT_RETRIES = 3
+
+CHROMIUM_ARGS = [
+    "--disable-gpu",
+    "--disable-software-rasterizer",
+    "--disable-extensions",
+    "--disable-background-networking",
+    "--disable-default-apps",
+    "--disable-sync",
+    "--disable-translate",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--mute-audio",
+    "--ignore-certificate-errors",
+    "--ignore-ssl-errors",
+    "--disable-dev-tools",
+    "--disable-hang-monitor",
+    "--disable-prompt-on-repost",
+    "--disable-client-side-phishing-detection",
+    "--password-store=basic",
+]
+
+
+# ==== Proxy Helpers ====
+def get_proxy() -> str | None:
+    return PROXY_URL if PROXY_ENABLED else None
+
+def get_ssl_context():
+    if PROXY_INSECURE_SSL:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    return None
+
+def make_connector() -> aiohttp.TCPConnector:
+    return aiohttp.TCPConnector(ssl=get_ssl_context())
 
 
 def safe_filename(url: str) -> str:
@@ -63,88 +114,122 @@ def safe_filename(url: str) -> str:
 
 # ===== Extract Links =====
 async def extract_links():
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page()
+    last_error = None
 
-        await page.goto(BASE_URL)
-        await page.wait_for_selector("table")
+    for attempt in range(1, PLAYWRIGHT_RETRIES + 1):
+        print(f"Launching headless browser...")
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=CHROMIUM_ARGS,
+                )
+                context = await browser.new_context(
+                    ignore_https_errors=True,
+                    proxy={"server": PROXY_URL} if PROXY_ENABLED and PROXY_URL else None,
+                )
+                page = await context.new_page()
 
-        data = await page.evaluate("""() => {
-            const result = {
-                bays: [],
-                non_re: [],
-                re_substations: [],
-                proposed_re: []
-            };
+                await page.goto(BASE_URL, wait_until="domcontentloaded", timeout=60_000)
 
-            const tables = Array.from(document.querySelectorAll('table'));
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=15_000)
+                except PWTimeoutError:
+                    pass
 
-            tables.forEach(table => {
-                const text = table.innerText.toLowerCase();
+                await page.wait_for_selector("table", timeout=30_000)
 
-                // ========= TABLE 1 =========
-                if (text.includes("connectivity margin in ists substations")) {
-                    const rows = table.querySelectorAll("tr");
+                data = await page.evaluate("""() => {
+                    const result = {
+                        bays: [],
+                        non_re: [],
+                        re_substations: [],
+                        proposed_re: []
+                    };
 
-                    rows.forEach(row => {
-                        const cells = row.querySelectorAll("td");
+                    const tables = Array.from(document.querySelectorAll('table'));
 
-                        if (cells.length >= 4) {
+                    tables.forEach(table => {
+                        const text = table.innerText.toLowerCase();
 
-                            // NON-RE (column 3)
-                            const nonRe = cells[2].querySelector("a");
-                            if (nonRe && nonRe.href.toLowerCase().includes("pdf")) {
-                                result.non_re.push(nonRe.href);
-                            }
+                        // ========= TABLE 1 =========
+                        if (text.includes("connectivity margin in ists substations")) {
+                            const rows = table.querySelectorAll("tr");
 
-                            // RE substations (column 4)
-                            const reSub = cells[3].querySelector("a");
-                            if (reSub && reSub.href.toLowerCase().includes("pdf")) {
-                                result.re_substations.push(reSub.href);
-                            }
+                            rows.forEach(row => {
+                                const cells = row.querySelectorAll("td");
+
+                                if (cells.length >= 4) {
+
+                                    // NON-RE (column 3)
+                                    const nonRe = cells[2].querySelector("a");
+                                    if (nonRe && nonRe.href.toLowerCase().includes("pdf")) {
+                                        result.non_re.push(nonRe.href);
+                                    }
+
+                                    // RE substations (column 4)
+                                    const reSub = cells[3].querySelector("a");
+                                    if (reSub && reSub.href.toLowerCase().includes("pdf")) {
+                                        result.re_substations.push(reSub.href);
+                                    }
+                                }
+                            });
+                        }
+
+                        // ========= TABLE 2 =========
+                        else if (text.includes("proposed re integration")) {
+                            const rows = table.querySelectorAll("tr");
+
+                            rows.forEach(row => {
+                                const link = row.querySelector("a");
+
+                                if (link && link.href.toLowerCase().includes("pdf")) {
+                                    result.proposed_re.push(link.href);
+                                }
+                            });
+                        }
+
+                        // ========= BAYS =========
+                        else if (text.includes("allocation of bays")) {
+                            const links = table.querySelectorAll("a[href]");
+                            links.forEach(a => {
+                                if (a.href.toLowerCase().includes("pdf")) {
+                                    result.bays.push(a.href);
+                                }
+                            });
                         }
                     });
-                }
 
-                // ========= TABLE 2 =========
-                else if (text.includes("proposed re integration")) {
-                    const rows = table.querySelectorAll("tr");
+                    return result;
+                }""")
 
-                    rows.forEach(row => {
-                        const link = row.querySelector("a");
+                await browser.close()
 
-                        if (link && link.href.toLowerCase().includes("pdf")) {
-                            result.proposed_re.push(link.href);
-                        }
-                    });
-                }
+            print("Page rendered.\n")
+            return data
 
-                // ========= BAYS =========
-                else if (text.includes("allocation of bays")) {
-                    const links = table.querySelectorAll("a[href]");
-                    links.forEach(a => {
-                        if (a.href.toLowerCase().includes("pdf")) {
-                            result.bays.push(a.href);
-                        }
-                    });
-                }
-            });
+        except PWTimeoutError as e:
+            last_error = e
+            if attempt < PLAYWRIGHT_RETRIES:
+                await asyncio.sleep(attempt * 5)
 
-            return result;
-        }""")
+        except Exception as e:
+            last_error = e
+            if attempt < PLAYWRIGHT_RETRIES:
+                await asyncio.sleep(5)
 
-        await browser.close()
-        return data
+    print(f"[!] Failed to fetch page after {PLAYWRIGHT_RETRIES} attempts. Last error: {last_error}")
+    return {"bays": [], "non_re": [], "re_substations": [], "proposed_re": []}
 
 # ===== Download =====
 async def async_download(session, url, dest):
+    proxy = get_proxy()
     async with DOWNLOAD_SEM:
         try:
             if os.path.exists(dest):
                 return
 
-            async with session.get(url) as resp:
+            async with session.get(url, proxy=proxy, timeout=aiohttp.ClientTimeout(total=90)) as resp:
                 if resp.status != 200:
                     print(f"Failed {resp.status}: {url}")
                     return
@@ -199,7 +284,9 @@ async def main():
         "proposed_re": os.path.join(BASE_DIR, "Margin", "Proposed RE"),
     }
 
-    async with aiohttp.ClientSession() as session:
+    connector = make_connector()
+
+    async with aiohttp.ClientSession(connector=connector) as session:
         all_tasks = []
 
         for section, urls in links_data.items():

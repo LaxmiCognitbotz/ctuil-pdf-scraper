@@ -1,15 +1,25 @@
 """
 Scraper for: https://www.ctuil.in/gna2022updates
 Download PDFs from the "Connectivity Fresh" column (latest 6 months).
+
+Output Directory: uploads/CTUIL-GNA-Connectivity-Fresh
 """
 
 import os
 import re
+import ssl
 import asyncio
+import urllib3
+from urllib.parse import urljoin
+
 import aiohttp
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin, unquote
+from dotenv import load_dotenv
+
+load_dotenv(verbose=True)
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==== Config ====
 BASE_URL = "https://www.ctuil.in/gna2022updates"
@@ -18,12 +28,50 @@ DOWNLOAD_DIR = "uploads/CTUIL-GNA-Connectivity-Fresh"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 DOWNLOAD_SEM = asyncio.Semaphore(10)
 
+# ==== Proxy Settings ====
+PROXY_ENABLED      = os.getenv("PROXY_ENABLED", "false").lower() == "true"
+PROXY_URL          = os.getenv("PROXY_URL", "")
+PROXY_INSECURE_SSL = os.getenv("PROXY_INSECURE_SSL", "false").lower() == "true"
+
+
+# ==== Proxy Helpers ====
+def get_proxy() -> str | None:
+    return PROXY_URL if PROXY_ENABLED else None
+
+def get_ssl_context():
+    if PROXY_INSECURE_SSL:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    return None
+
+def make_connector() -> aiohttp.TCPConnector:
+    return aiohttp.TCPConnector(ssl=get_ssl_context())
+
+def get_requests_kwargs():
+    proxy = get_proxy()
+
+    kwargs = {
+        "timeout": 30,
+        "verify": not PROXY_INSECURE_SSL,
+    }
+
+    if proxy:
+        kwargs["proxies"] = {
+            "http": proxy,
+            "https": proxy,
+        }
+
+    return kwargs
+
+
 # ==== Fetch Connectivity Fresh Links ====
 def fetch_connectivity_fresh_links() -> list[dict]:
     """
     Parse the GNA 2022 updates page and extract the 'Connectivity Fresh' PDF links.
     """
-    res = requests.get(BASE_URL, timeout=30)
+    res = requests.get(BASE_URL, **get_requests_kwargs())
     res.raise_for_status()
 
     soup = BeautifulSoup(res.text, "html.parser")
@@ -67,13 +115,14 @@ def fetch_connectivity_fresh_links() -> list[dict]:
 
 # ==== Download ====
 async def async_download(session: aiohttp.ClientSession, url: str, dest: str):
+    proxy = get_proxy()
     async with DOWNLOAD_SEM:
         try:
             if os.path.exists(dest):
                 print(f"[SKIP] {os.path.basename(dest)}")
                 return
 
-            async with session.get(url) as resp:
+            async with session.get(url, proxy=proxy, timeout=aiohttp.ClientTimeout(total=90)) as resp:
                 if resp.status != 200:
                     print(f"[FAIL] {url}  (HTTP {resp.status})")
                     return
@@ -157,7 +206,9 @@ async def main():
 
     print(f"[INFO] New files to download: {len(planned)}")
 
-    async with aiohttp.ClientSession() as session:
+    connector = make_connector()
+
+    async with aiohttp.ClientSession(connector=connector) as session:
         coros = [async_download(session, url, dest) for url, dest in planned]
         await asyncio.gather(*coros)
 

@@ -15,4 +15,5 @@ dependencies = [
     "python-dateutil>=2.9.0.post0",
     "lxml>=6.1.0",
     "python-multipart>=0.0.26",
+    "python-dotenv>=1.2.2",
 ]
